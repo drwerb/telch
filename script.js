@@ -1,3 +1,92 @@
+var rerenderYAxis, rerenderXAxis, renewYMax, pStart = 0.8, pStop = 0.9, getMaxs, getXs;
+
+var xRule = {
+    3: 3,
+    4: 4,
+    5: 5,
+    6: 6,
+    7: 6,
+    8: 4,
+    9: 4,
+    10: 5,
+    11: 5,
+    12: 6,
+    13: 6,
+    14: 6
+};
+
+var months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+var charm = new Telecharm();
+
+function Telecharm() {
+    this.mainChart = {
+        viewBox: {
+            width: 0,
+            length: 0
+        },
+        element: {
+            width: 0,
+            length: 0
+        },
+        Xs: null,
+        Ys: {},
+        colors: {},
+        dotsCount: {},
+        dislayedCarts: new Set(),
+        maxY: -Infinity,
+        svg: null
+    };
+    // axisX: {
+
+    // },
+    // axisY: {},
+    this.preview = {
+        viewBox: {
+            width: 0,
+            length: 0
+        },
+        element: {
+            width: 0,
+            length: 0
+        },
+        carrier: {
+            vbWidth: 0,
+            vbHeight: 0
+        }
+    };
+}
+
+Telecharm.prototype.setMainChartDim = function(width, length) {
+    this.mainChart.element.width = width;
+    this.mainChart.element.length = length;
+};
+
+Telecharm.prototype.setMainChartDimVB = function(width, length) {
+    this.mainChart.viewBox.width = width;
+    this.mainChart.viewBox.length = length;
+};
+
+Telecharm.prototype.setXs = function(Xs) {
+    this.mainChart.Xs = Xs.slice(0);
+};
+
+Telecharm.prototype.setYs = function(name, Ys, color) {
+    this.mainChart.dotsCount[name] = Ys.length;
+    this.mainChart.Ys[name] = Ys.slice(0);
+    this.mainChart.dislayedCarts.add(name);
+    this.mainChart.colors[name] = color;
+
+    this.setMaxY(Ys);
+};
+
+Telecharm.prototype.setMaxY = function(Ys) {
+    this.mainChart.maxY = Math.max(this.mainChart.maxY, ...Ys);
+};
+
+Telecharm.prototype.setChartSvg = function(svg) {
+    this.mainChart.svg = svg;
+};
+
 document.addEventListener("DOMContentLoaded", () => {
     let svg = initAxis(1000, 500, data[0]);
     document.body.appendChild(svg);
@@ -40,7 +129,12 @@ function drawMainChart(width, height, d) {
     vbHeight = maxY;
     vbWidth = vbHeight * width / height;
 
-    svg.setAttribute("viewBox", [0, 0, vbWidth + 10, vbHeight].join(" "));
+    charm.setMainChartDim(width, height);
+    charm.setMainChartDimVB(vbWidth, vbHeight);
+    charm.setXs(d.columns[0].slice(1).map(d => new Date(d)));
+    charm.setYs(axisYName, Ys.slice(1), d.colors[Ys[0]]);
+
+    svg.setAttribute("viewBox", [0, 0, vbWidth, vbHeight].join(" "));
 
     svg.style.width = width + "px";
     svg.style.height = height + "px";
@@ -103,8 +197,6 @@ function drawPreviewChart(width, height, d, mainChartSvg) {
 
     return svg;
 }
-
-var rerenderAxis, renewYMax, pStart = 0.8, pStop = 0.9, getMaxs;
 
 function drawPreviewSlider(svg, options) {
     let vbHeight = options.viewBoxHeight,
@@ -268,7 +360,8 @@ function drawPreviewSlider(svg, options) {
         pStart = startPos / vbWidth;
         pStop = endPos / vbWidth;
 
-        rerenderAxis();
+        rerenderXAxis();
+        rerenderYAxis();
     };
 
     rectCenter.onmousedown = function(e) {
@@ -310,7 +403,8 @@ function drawPreviewSlider(svg, options) {
         // mainChartG.setAttribute("transform", " scale(" + vbWidth / (endPos - startPos) + " 1) translate(" + -1 * mainVBW * (rectCenter.x.animVal.value + dX) / vbWidth + " 0)");
         mainChartG.setAttribute("transform", " scale(" + vbWidth / (endPos - startPos) + " " + (maxs.maxY / maxs.currMaxY) +") translate(" + -1 * mainVBW * (rectCenter.x.animVal.value + dX) / vbWidth + " " + (maxs.currMaxY - maxs.maxY) + ")");
 
-        rerenderAxis();
+        rerenderXAxis();
+        rerenderYAxis();
     };
 
     rectLeftHandle.onmousedown = function(e) {
@@ -352,7 +446,8 @@ function drawPreviewSlider(svg, options) {
 
         mainChartG.setAttribute("transform", " scale(" + vbWidth / (endPos - startPos) + " " + (maxs.maxY / maxs.currMaxY) +") translate(" + -1 * mainVBW * (rectCenter.x.animVal.value + dX) / vbWidth + " " + (maxs.currMaxY - maxs.maxY) + ")");
 
-        rerenderAxis();
+        rerenderXAxis();
+        rerenderYAxis();
     };
 
     rectRightHandle.onmousedown = function(e) {
@@ -368,7 +463,7 @@ function drawPreviewSlider(svg, options) {
 function initAxis(width, height, d) {
     let ns = "http://www.w3.org/2000/svg",
         svg = document.createElementNS(ns, "svg"),
-        vbWidth, vbHeight, N, maxY, Ys,
+        vbWidth, vbHeight, N, maxY, Ys, Xs,
         axisYName;
 
 
@@ -376,6 +471,8 @@ function initAxis(width, height, d) {
     N = Ys.length - 1;
     axisYName = Ys[0];
     maxY = Math.max(...Ys.slice(1));
+
+    Xs = d.columns[0].slice(1).map(d => new Date(d));
 
     vbHeight = maxY;
     vbWidth = vbHeight * width / height;
@@ -401,9 +498,10 @@ function initAxis(width, height, d) {
             maxY,
             currMaxY
         };
+
     };
 
-    rerenderAxis = function() {
+    rerenderYAxis = function() {
         let { currMaxY: currVBHeight } = getMaxs(),
             Y = 0;
 
@@ -438,13 +536,63 @@ function initAxis(width, height, d) {
         }
     };
 
+    getXs = function() {
+        let dotsStart = Math.floor(N * pStart),
+            dotsEnd = Math.round(N * pStop);
+
+        return {
+            viewXs: Xs.slice(dotsStart, dotsEnd)
+        };
+    };
+
+    rerenderXAxis = function() {
+        var { viewXs } = getXs(),
+            len = viewXs.length,
+            segDotsLen, X = 0, dX, segments, startDotX;
+
+        if (len < 15) {
+            segments = xRule[len];
+        } else {
+            segments = len % 6 < len % 5 ? 6 : 5;
+        }
+
+        segDotsLen = Math.floor(len / segments);
+
+        while (gX.children.length) {
+            gX.children[0].remove();
+        }
+
+        dX = segDotsLen * vbWidth / len;
+        startDotX = Math.floor((len - segDotsLen * (segments - 1)) / 2);
+        X = startDotX * vbWidth / len;
+
+        for (let i = startDotX; i < len; i += segDotsLen) {
+            let text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+            let date = viewXs[i];
+
+            text.setAttribute("class", "axis");
+            text.setAttribute("x", X);
+            text.setAttribute("y", vbHeight - 10);
+            text.setAttribute("fill", "#777777");
+
+            text.innerHTML = date.getDate() + " " + months[date.getMonth()];
+
+            gX.appendChild(text);
+
+            X += dX;
+        }
+    };
+
     let g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    let gX = document.createElementNS("http://www.w3.org/2000/svg", "g");
 
-    g.id = "axis";
+    // g.id = "axis";
 
-    rerenderAxis();
+    rerenderYAxis();
+    rerenderXAxis();
 
     svg.appendChild(g);
+    svg.appendChild(gX);
 
     return svg;
 }
