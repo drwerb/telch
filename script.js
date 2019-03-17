@@ -1,4 +1,6 @@
-var rerenderYAxis, rerenderXAxis, renewYMax, pStart = 0.8, pStop = 0.9, getMaxs, getXs;
+var rerenderYAxis, rerenderXAxis, renewYMax, pStart = 0.8, pStop = 0.9, getXs;
+
+var rerenderLeft, rerenderCener, rerenderRight;
 
 var xRule = {
     3: 3,
@@ -16,93 +18,208 @@ var xRule = {
 };
 
 var months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-var charm = new Telecharm();
+var charm = null;
 
-function Telecharm() {
+function Telecharm(params) {
+    this.svgns = "http://www.w3.org/2000/svg";
+    this.current = null;
+    this.container = null;
+
     this.mainChart = {
         viewBox: {
             width: 0,
-            length: 0
+            height: 0
         },
         element: {
             width: 0,
-            length: 0
+            height: 0
         },
+        svg: null
+    };
+
+    this.dots = {
         Xs: null,
         Ys: {},
         colors: {},
-        dotsCount: {},
-        dislayedCarts: new Set(),
-        maxY: -Infinity,
-        svg: null
+        count: {},
+        dislayedCharts: new Set(),
+        maxY: -Infinity
     };
-    // axisX: {
 
-    // },
-    // axisY: {},
-    this.preview = {
+    this.axis = {
         viewBox: {
             width: 0,
-            length: 0
+            height: 0
         },
         element: {
             width: 0,
-            length: 0
+            height: 0
+        },
+        svg: null
+    };
+
+    this.preview = {
+        viewBox: {
+            width: 0,
+            height: 0
+        },
+        element: {
+            width: 0,
+            height: 0
         },
         carrier: {
             vbWidth: 0,
-            vbHeight: 0
-        }
+            vbHeight: 0,
+            begin: 0,
+            end: 1,
+            beginToRender: 0,
+            endToRender: 1
+        },
+        svg: null
     };
+
+    this.init(params);
 }
 
-Telecharm.prototype.setMainChartDim = function(width, length) {
-    this.mainChart.element.width = width;
-    this.mainChart.element.length = length;
-};
+Telecharm.prototype.init = function(params) {
+    let mc = this.mainChart,
+        pv = this.preview,
+        ax = this.axis,
+        Ys = params.data.columns[1];
+        axisYName = Ys[0],
+        container = document.getElementById(params.container),
+        cW = container.offsetWidth,
+        cH = container.offsetHeight;
 
-Telecharm.prototype.setMainChartDimVB = function(width, length) {
-    this.mainChart.viewBox.width = width;
-    this.mainChart.viewBox.length = length;
+
+    this.container = container;
+
+    mc.element.width = "100%";
+    mc.element.height = (1000 / 11) + "%";
+    this.setXs(params.data.columns[0].slice(1).map(d => new Date(d)));
+    this.setYs(Ys[0], Ys.slice(1), params.data.colors[axisYName]);
+    mc.viewBox.height = this.dots.maxY;
+    mc.viewBox.width = this.dots.maxY * cW / (10 * cH / 11);
+
+    ax.element.width = mc.element.width;
+    ax.element.height = mc.element.height;
+    ax.viewBox.height = mc.viewBox.height;
+    ax.viewBox.width = mc.viewBox.width;
+
+    pv.element.width = "100%";
+    pv.element.height = (100 / 11) + "%";
+    pv.viewBox.height = this.dots.maxY;
+    pv.viewBox.width = pv.viewBox.height * cW / (cH / 11);
+
+    this.drawAxis();
+    this.drawMainChart();
+    this.drawPreviewChart();
 };
 
 Telecharm.prototype.setXs = function(Xs) {
-    this.mainChart.Xs = Xs.slice(0);
+    this.dots.Xs = Xs.slice(0);
 };
 
 Telecharm.prototype.setYs = function(name, Ys, color) {
-    this.mainChart.dotsCount[name] = Ys.length;
-    this.mainChart.Ys[name] = Ys.slice(0);
-    this.mainChart.dislayedCarts.add(name);
-    this.mainChart.colors[name] = color;
+    this.dots.count[name] = Ys.length;
+    this.dots.colors[name] = color;
+    this.dots.Ys[name] = Ys.slice(0);
+    this.dots.dislayedCharts.add(name);
+    this.current = name;
 
     this.setMaxY(Ys);
 };
 
+Telecharm.prototype.getCurrentYs = function() {
+    return this.dots.Ys[this.current];
+};
+
+Telecharm.prototype.getCurrentColor = function() {
+    return this.dots.colors[this.current];
+};
+
 Telecharm.prototype.setMaxY = function(Ys) {
-    this.mainChart.maxY = Math.max(this.mainChart.maxY, ...Ys);
+    this.dots.maxY = Math.max(this.dots.maxY, ...Ys);
 };
 
 Telecharm.prototype.setChartSvg = function(svg) {
     this.mainChart.svg = svg;
 };
 
-document.addEventListener("DOMContentLoaded", () => {
-    let svg = initAxis(1000, 500, data[0]);
-    document.body.appendChild(svg);
+Telecharm.prototype.getMaxs = function() {
+    let Ys = this.getCurrentYs(),
+        N = Ys.length,
+        dotsStart = Math.floor(N * this.preview.carrier.begin),
+        dotsEnd = Math.round(N * this.preview.carrier.end),
+        currMaxY = Math.max(...Ys.slice(dotsStart, dotsEnd));
 
-    svg = drawMainChart(1000, 500, data[0]);
+    return {
+        maxY: this.dots.maxY,
+        currMaxY
+    };
+};
+
+Telecharm.prototype.drawMainChart = function() {
+    let svg = document.createElementNS(this.svgns, "svg"),
+        mc = this.mainChart;
+
+    this.setChartSvg(svg);
+
+    svg.setAttribute("viewBox", [0, 0, mc.viewBox.width, mc.viewBox.height].join(" "));
+
+    svg.style.width = mc.element.width;
+    svg.style.height = mc.element.height;
+    svg.style.display = "block";
     svg.style.position = "absolute";
     svg.style.top = 0;
     svg.style.left = 0;
-    document.body.appendChild(svg);
 
-    svg = drawPreviewChart(1000, 50, data[0], svg);
-    document.body.appendChild(svg);
-});
+    this.drawChart(svg, {
+        viewBoxHeight: mc.viewBox.height,
+        viewBoxWidth: mc.viewBox.width,
+        lineStrokeWidth: "1px",
+        chartGroupId: "mainChart"
+    });
 
-function createLine(coords, stroke) {
-    let line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+    this.container.appendChild(svg);
+}
+
+Telecharm.prototype.drawChart = function(svg, options) {
+    let Ys = this.getCurrentYs(),
+        N = Ys.length - 1,
+        vbHeight = options.viewBoxHeight,
+        dX = options.viewBoxWidth / N,
+        X = 0,
+        lineStroke = this.getCurrentColor(),
+        lineStrokeWidth = options.lineStrokeWidth,
+        
+        maskId = options.mask;
+
+    let g = document.createElementNS(this.svgns, "g");
+
+    g.id = options.chartGroupId;
+
+    for (i = 1; i < N; i++) {
+        let line = this.createLine([X, vbHeight - Ys[i], X + dX, vbHeight - Ys[i + 1]], lineStroke);
+        line.style.strokeWidth = lineStrokeWidth;
+        line.setAttribute("vector-effect", "non-scaling-stroke");
+
+        if (maskId) {
+            line.setAttribute("mask", "url(#" + maskId + ")");
+        }
+
+        g.appendChild(line);
+
+        X += dX;
+    }
+
+    svg.appendChild(g);
+
+    return svg;
+};
+
+Telecharm.prototype.createLine = function(coords, stroke) {
+    let line = document.createElementNS(this.svgns, "line");
 
     line.setAttribute("x1", coords[0]);
     line.setAttribute("y1", coords[1]);
@@ -112,110 +229,57 @@ function createLine(coords, stroke) {
     line.style.stroke = stroke;
 
     return line;
-}
+};
 
-function drawMainChart(width, height, d) {
-    let ns = "http://www.w3.org/2000/svg",
-        svg = document.createElementNS(ns, "svg"),
-        vbWidth, vbHeight, N, maxY, Ys,
-        axisYName;
+Telecharm.prototype.drawPreviewChart = function() {
+    let svg = document.createElementNS(this.svgns, "svg"),
+        pv = this.preview;
 
+    svg.setAttribute("viewBox", [0, 0, pv.viewBox.width, pv.viewBox.height].join(" "));
 
-    Ys = d.columns[1];
-    N = Ys.length - 1;
-    axisYName = Ys[0];
-    maxY = Math.max(...Ys.slice(1));
+    this.preview.svg = svg;
 
-    vbHeight = maxY;
-    vbWidth = vbHeight * width / height;
+    svg.style.width = pv.element.width;
+    svg.style.height = pv.element.height;
+    svg.style.display = "block";
+    svg.style.position = "absolute";
+    svg.style.bottom = 0;
+    svg.style.left = 0;
 
-    charm.setMainChartDim(width, height);
-    charm.setMainChartDimVB(vbWidth, vbHeight);
-    charm.setXs(d.columns[0].slice(1).map(d => new Date(d)));
-    charm.setYs(axisYName, Ys.slice(1), d.colors[Ys[0]]);
-
-    svg.setAttribute("viewBox", [0, 0, vbWidth, vbHeight].join(" "));
-
-    svg.style.width = width + "px";
-    svg.style.height = height + "px";
-    svg.style.display = "inline-block";
-
-    drawChart(svg, {
-        viewBoxHeight: vbHeight,
-        viewBoxWidth: vbWidth,
-        dotsCount: N,
-        dots: Ys,
-        lineStroke: d.colors[Ys[0]],
-        lineStrokeWidth: "1px",
-        chartGroupId: "mainChart"
-    });
-
-    return svg;
-}
-
-function drawPreviewChart(width, height, d, mainChartSvg) {
-    let ns = "http://www.w3.org/2000/svg",
-        svg = document.createElementNS(ns, "svg"),
-        vbWidth, vbHeight, N, maxY, Ys,
-        axisYName;
-
-
-    Ys = d.columns[1];
-    N = Ys.length - 1;
-    axisYName = Ys[0];
-    maxY = Math.max(...Ys.slice(1));
-
-    vbHeight = maxY;
-    vbWidth = vbHeight * width / height;
-
-    svg.setAttribute("viewBox", [0, 0, vbWidth + 10, vbHeight].join(" "));
-
-    svg.style.width = width + "px";
-    svg.style.height = height + "px";
-    svg.style.display = "inline-block";
-
-    drawChart(svg, {
-        viewBoxHeight: vbHeight,
-        viewBoxWidth: vbWidth,
-        dotsCount: N,
-        dots: Ys,
-        lineStroke: d.colors[Ys[0]],
+    this.drawChart(svg, {
+        viewBoxHeight: pv.viewBox.height,
+        viewBoxWidth: pv.viewBox.width,
         lineStrokeWidth: "1px",
         mask: "sliderMask",
         chartGroupId: "previewChart"
     });
 
-    drawPreviewSlider(svg, {
-        viewBoxHeight: vbHeight,
-        viewBoxWidth: vbWidth,
-        startPos: vbWidth * pStart,
-        endPos: vbWidth * pStop,
-        width: width,
-        mainChart: mainChartSvg,
-        chartGroupId: "previewChart"
-    });
+    this.drawPreviewSlider();
 
-    return svg;
-}
+    this.container.appendChild(svg);
+};
 
-function drawPreviewSlider(svg, options) {
-    let vbHeight = options.viewBoxHeight,
-        vbWidth = options.viewBoxWidth,
-        startPos = options.startPos,
-        endPos = options.endPos,
+Telecharm.prototype.drawPreviewSlider = function() {
+    let pv = this.preview,
+        vbHeight = pv.viewBox.height,
+        vbWidth = pv.viewBox.width,
+        startPos = vbWidth * pv.carrier.begin,
+        endPos = vbWidth * pv.carrier.end,
         sidesOpacity = 0.4,
         maskId = "sliderMask",
-        width = options.width,
+        width = this.container.offsetWidth,
         koef = vbWidth / width,
-        mainChartSvg = options.mainChart,
-        sideHandleWidth = 0.1,
-        edgeHeight = 0.1;
+        mainChartSvg = this.mainChart.svg,
+        sideHandleWidth = 10 * koef,
+        edgeHeight = 5 * koef,
+        svg = this.preview.svg,
+        me = this;
 
-    let mask = document.createElementNS("http://www.w3.org/2000/svg", "mask");
+    let mask = document.createElementNS(this.svgns, "mask");
 
     mask.id = maskId;
 
-    let maskRectLeft = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    let maskRectLeft = document.createElementNS(this.svgns, "rect");
 
     maskRectLeft.setAttribute("x", "0");
     maskRectLeft.setAttribute("y", "0");
@@ -227,19 +291,19 @@ function drawPreviewSlider(svg, options) {
 
     mask.appendChild(maskRectLeft);
 
-    let maskRectCenter = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    let maskRectCenter = document.createElementNS(this.svgns, "rect");
 
-    maskRectCenter.setAttribute("x", startPos + 1 + sideHandleWidth * (endPos - startPos));
-    maskRectCenter.setAttribute("y", edgeHeight * vbHeight);
-    maskRectCenter.setAttribute("width", endPos - startPos - 2 * sideHandleWidth * (endPos - startPos));
-    maskRectCenter.setAttribute("height", vbHeight * (1 - 2 * edgeHeight));
+    maskRectCenter.setAttribute("x", startPos + 1 + sideHandleWidth);
+    maskRectCenter.setAttribute("y", edgeHeight);
+    maskRectCenter.setAttribute("width", endPos - startPos - 2 * sideHandleWidth);
+    maskRectCenter.setAttribute("height", vbHeight - 2 * edgeHeight);
 
     maskRectCenter.style.fill = "white";
     maskRectCenter.style.fillOpacity = 0.7;
 
     mask.appendChild(maskRectCenter);
 
-    let maskRectRight = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    let maskRectRight = document.createElementNS(this.svgns, "rect");
 
     maskRectRight.setAttribute("x", endPos);
     maskRectRight.setAttribute("y", "0");
@@ -253,7 +317,7 @@ function drawPreviewSlider(svg, options) {
     svg.appendChild(mask);
 
     // left
-    let rectLeft = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    let rectLeft = document.createElementNS(this.svgns, "rect");
 
     rectLeft.setAttribute("x", "0");
     rectLeft.setAttribute("y", "0");
@@ -266,7 +330,7 @@ function drawPreviewSlider(svg, options) {
 
     svg.appendChild(rectLeft);
 
-    let rectCenter = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    let rectCenter = document.createElementNS(this.svgns, "rect");
 
     rectCenter.setAttribute("x", startPos + 1);
     rectCenter.setAttribute("y", "0");
@@ -279,11 +343,11 @@ function drawPreviewSlider(svg, options) {
 
     svg.appendChild(rectCenter);
 
-    let rectLeftHandle = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    let rectLeftHandle = document.createElementNS(this.svgns, "rect");
 
     rectLeftHandle.setAttribute("x", startPos + 1);
     rectLeftHandle.setAttribute("y", "0");
-    rectLeftHandle.setAttribute("width", sideHandleWidth * (endPos - startPos));
+    rectLeftHandle.setAttribute("width", sideHandleWidth);
     rectLeftHandle.setAttribute("height", vbHeight);
     rectLeftHandle.setAttribute("mask", "url(#" + maskId + ")");
 
@@ -291,11 +355,11 @@ function drawPreviewSlider(svg, options) {
 
     svg.appendChild(rectLeftHandle);
 
-    let rectRightHandle = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    let rectRightHandle = document.createElementNS(this.svgns, "rect");
 
-    rectRightHandle.setAttribute("x", endPos - sideHandleWidth * (endPos - startPos));
+    rectRightHandle.setAttribute("x", endPos - sideHandleWidth);
     rectRightHandle.setAttribute("y", "0");
-    rectRightHandle.setAttribute("width", sideHandleWidth * (endPos - startPos));
+    rectRightHandle.setAttribute("width", sideHandleWidth);
     rectRightHandle.setAttribute("height", vbHeight);
     rectRightHandle.setAttribute("mask", "url(#" + maskId + ")");
 
@@ -304,7 +368,7 @@ function drawPreviewSlider(svg, options) {
     svg.appendChild(rectRightHandle);
 
     // right
-    let rectRight = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    let rectRight = document.createElementNS(this.svgns, "rect");
 
     rectRight.setAttribute("x", endPos);
     rectRight.setAttribute("y", "0");
@@ -325,19 +389,27 @@ function drawPreviewSlider(svg, options) {
     var lastMousePosX;
 
     var mouseMoveHandler = function(e) {
-        let dX = koef * (e.pageX - lastMousePosX);
-        lastMousePosX = e.pageX;
+        let dXMouse = e.pageX - lastMousePosX;
 
-        if (dX > 0) {
-            dX = dX > rectRight.width.animVal.value ? rectRight.width.animVal.value : dX;
-        } else {
-            dX = -1 * dX > rectLeft.width.animVal.value ? -1 * rectLeft.width.animVal.value : dX;
-        }
-
-        if (dX == 0) {
+        if (dXMouse == 0) {
             return;
         }
 
+        let pv = me.preview,
+            dX = dXMouse / me.preview.svg.offsetWidth;
+
+        lastMousePosX = e.pageX;
+
+        if (dX > 0) {
+            let tmlEToRender = pv.carrier.endToRender + dX;
+            pv.carrier.beginToRender = tmlEToRender > 1 ? 1 : tmlEToRender;
+        } else {
+            let tmpBToRender = pv.carrier.beginToRender + dX;
+            pv.carrier.beginToRender = tmpBToRender < 0 ? 0 : tmpBToRender;
+        }
+    };
+
+    rerenderCener = function() {
         maskRectLeft.setAttribute("width", maskRectLeft.width.animVal.value + dX);
         maskRectCenter.setAttribute("x", maskRectCenter.x.animVal.value + dX);
         maskRectRight.setAttribute("x", maskRectRight.x.animVal.value + dX);
@@ -350,15 +422,8 @@ function drawPreviewSlider(svg, options) {
         rectRight.setAttribute("x", rectRight.x.animVal.value + dX);
         rectRight.setAttribute("width", rectRight.width.animVal.value - dX);
 
-        let maxs = getMaxs();
+        let maxs = me.getMaxs();
         mainChartG.setAttribute("transform", " scale(" + vbWidth / (endPos - startPos) + " " + (maxs.maxY / maxs.currMaxY) +") translate(" + -1 * mainVBW * (rectCenter.x.animVal.value + dX) / vbWidth + " " + (maxs.currMaxY - maxs.maxY) + ")");
-        // mainChartG.setAttribute("transform", " scale(" + vbWidth / (endPos - startPos) + " 1) translate(" + -1 * mainVBW * (rectCenter.x.animVal.value + dX) / vbWidth + " 0)");
-
-        startPos += dX;
-        endPos += dX;
-
-        pStart = startPos / vbWidth;
-        pStop = endPos / vbWidth;
 
         rerenderXAxis();
         rerenderYAxis();
@@ -378,7 +443,7 @@ function drawPreviewSlider(svg, options) {
         lastMousePosX = e.pageX;
 
         if (dX > 0) {
-            dX = dX > rectRight.width.animVal.value ? rectRight.width.animVal.value : dX;
+            dX = dX > rectCenter.width.animVal.value ? rectCenter.width.animVal.value : dX;
         } else {
             dX = -1 * dX > rectLeft.width.animVal.value ? -1 * rectLeft.width.animVal.value : dX;
         }
@@ -399,8 +464,7 @@ function drawPreviewSlider(svg, options) {
         rectCenter.setAttribute("x", rectCenter.x.animVal.value + dX);
         rectCenter.setAttribute("width", rectCenter.width.animVal.value - dX);
 
-        let maxs = getMaxs();
-        // mainChartG.setAttribute("transform", " scale(" + vbWidth / (endPos - startPos) + " 1) translate(" + -1 * mainVBW * (rectCenter.x.animVal.value + dX) / vbWidth + " 0)");
+        let maxs = me.getMaxs();
         mainChartG.setAttribute("transform", " scale(" + vbWidth / (endPos - startPos) + " " + (maxs.maxY / maxs.currMaxY) +") translate(" + -1 * mainVBW * (rectCenter.x.animVal.value + dX) / vbWidth + " " + (maxs.currMaxY - maxs.maxY) + ")");
 
         rerenderXAxis();
@@ -423,7 +487,7 @@ function drawPreviewSlider(svg, options) {
         if (dX > 0) {
             dX = dX > rectRight.width.animVal.value ? rectRight.width.animVal.value : dX;
         } else {
-            dX = -1 * dX > rectLeft.width.animVal.value ? -1 * rectLeft.width.animVal.value : dX;
+            dX = -1 * dX > rectCenter.width.animVal.value ? -1 * rectCenter.width.animVal.value : dX;
         }
 
         if (dX == 0) {
@@ -442,7 +506,7 @@ function drawPreviewSlider(svg, options) {
         rectRight.setAttribute("x", rectRight.x.animVal.value + dX);
         rectRight.setAttribute("width", rectRight.width.animVal.value - dX);
 
-        let maxs = getMaxs();
+        let maxs = me.getMaxs();
 
         mainChartG.setAttribute("transform", " scale(" + vbWidth / (endPos - startPos) + " " + (maxs.maxY / maxs.currMaxY) +") translate(" + -1 * mainVBW * (rectCenter.x.animVal.value + dX) / vbWidth + " " + (maxs.currMaxY - maxs.maxY) + ")");
 
@@ -458,51 +522,39 @@ function drawPreviewSlider(svg, options) {
             document.onmouseup = null;
         };
     };
-}
+};
 
-function initAxis(width, height, d) {
-    let ns = "http://www.w3.org/2000/svg",
-        svg = document.createElementNS(ns, "svg"),
+Telecharm.prototype.drawAxis = function() {
+    let svg = document.createElementNS(this.svgns, "svg"),
         vbWidth, vbHeight, N, maxY, Ys, Xs,
-        axisYName;
+        me = this;
 
+    Ys = this.getCurrentYs();
+    N = Ys.length;
+    maxY = this.dots.maxY;
 
-    Ys = d.columns[1];
-    N = Ys.length - 1;
-    axisYName = Ys[0];
-    maxY = Math.max(...Ys.slice(1));
+    Xs = this.dots.Xs;
 
-    Xs = d.columns[0].slice(1).map(d => new Date(d));
+    vbHeight = this.mainChart.viewBox.height;
+    vbWidth = this.mainChart.viewBox.width;
 
-    vbHeight = maxY;
-    vbWidth = vbHeight * width / height;
+    svg.setAttribute("viewBox", [0, 0, vbWidth, vbHeight].join(" "));
 
-    svg.setAttribute("viewBox", [0, 0, vbWidth + 10, vbHeight].join(" "));
+    svg.style.width = this.mainChart.element.width;
+    svg.style.height = this.mainChart.element.height;
+    svg.style.display = "block";
+    svg.style.position = "absolute";
+    svg.style.top = 0;
+    svg.style.left = 0;
 
-    svg.style.width = width + "px";
-    svg.style.height = height + "px";
-    svg.style.display = "inline-block";
-
-    let style = document.createElementNS("http://www.w3.org/2000/svg", "style");
+    let style = document.createElementNS(this.svgns, "style");
 
     style.innerHTML = ".axis { font: normal 5px sans-serif; }";
 
     svg.appendChild(style);
 
-    getMaxs = function() {
-        let dotsStart = Math.floor(N * pStart),
-            dotsEnd = Math.round(N * pStop),
-            currMaxY = Math.max(...Ys.slice(dotsStart, dotsEnd));
-
-        return {
-            maxY,
-            currMaxY
-        };
-
-    };
-
     rerenderYAxis = function() {
-        let { currMaxY: currVBHeight } = getMaxs(),
+        let { currMaxY: currVBHeight } = me.getMaxs(),
             Y = 0;
 
         dY = 2 * currVBHeight / 11;
@@ -511,17 +563,16 @@ function initAxis(width, height, d) {
             g.children[0].remove();
         }
 
-        // g.setAttribute("transform", "scale(1 " + maxY/currVBHeight + ") translate(0 " + (currVBHeight - maxY) + ")");
         g.setAttribute("transform", "scale(1 " + maxY/currVBHeight + ")");
 
         for (let i = 0; i < 6 ; i++) {
-            let line = createLine([0, currVBHeight - Y, vbWidth, currVBHeight - Y], "#BBBBBB");
+            let line = me.createLine([0, currVBHeight - Y, vbWidth, currVBHeight - Y], "#BBBBBB");
 
             line.style.strokeWidth = "0.5px";
 
             g.appendChild(line);
 
-            let text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+            let text = document.createElementNS(me.svgns, "text");
 
             text.setAttribute("class", "axis");
             text.setAttribute("x", 0);
@@ -567,7 +618,7 @@ function initAxis(width, height, d) {
         X = startDotX * vbWidth / len;
 
         for (let i = startDotX; i < len; i += segDotsLen) {
-            let text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+            let text = document.createElementNS(me.svgns, "text");
             let date = viewXs[i];
 
             text.setAttribute("class", "axis");
@@ -583,10 +634,8 @@ function initAxis(width, height, d) {
         }
     };
 
-    let g = document.createElementNS("http://www.w3.org/2000/svg", "g");
-    let gX = document.createElementNS("http://www.w3.org/2000/svg", "g");
-
-    // g.id = "axis";
+    let g = document.createElementNS(this.svgns, "g");
+    let gX = document.createElementNS(this.svgns, "g");
 
     rerenderYAxis();
     rerenderXAxis();
@@ -594,40 +643,14 @@ function initAxis(width, height, d) {
     svg.appendChild(g);
     svg.appendChild(gX);
 
-    return svg;
-}
+    this.container.appendChild(svg);
+};
 
-function drawChart(svg, options) {
-    let N = options.dotsCount,
-        vbHeight = options.viewBoxHeight,
-        dX = options.viewBoxWidth / (N - 1),
-        X = 0,
-        lineStroke = options.lineStroke,
-        lineStrokeWidth = options.lineStrokeWidth,
-        Ys = options.dots,
-        maskId = options.mask;
-
-    let g = document.createElementNS("http://www.w3.org/2000/svg", "g");
-
-    g.id = options.chartGroupId;
-
-    for (i = 1; i < N ; i++) {
-        let line = createLine([X, vbHeight - Ys[i], X + dX, vbHeight - Ys[i + 1]], lineStroke);
-        line.style.strokeWidth = lineStrokeWidth;
-        line.setAttribute("vector-effect", "non-scaling-stroke");
-
-        if (maskId) {
-            line.setAttribute("mask", "url(#" + maskId + ")");
-        }
-
-        g.appendChild(line);
-
-        X += dX;
-    }
-
-    svg.appendChild(g);
-
-    return svg;
-}
-
-
+document.addEventListener("DOMContentLoaded", () => {
+    charm = new Telecharm({
+        width: 1000,
+        height: 500,
+        data: data[0],
+        container: "chart"
+    });
+});
