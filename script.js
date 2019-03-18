@@ -1,29 +1,32 @@
 var rerenderYAxis, rerenderXAxis, renewYMax, pStart = 0.8, pStop = 0.9, getXs;
 
-var rerenderLeft, rerenderCener, rerenderRight;
+var rerenderLeft, rerenderCener, rerenderRight, rerenderSlider;
 
-var xRule = {
-    3: 3,
-    4: 4,
-    5: 5,
-    6: 6,
-    7: 6,
-    8: 4,
-    9: 4,
-    10: 5,
-    11: 5,
-    12: 6,
-    13: 6,
-    14: 6
-};
-
-var months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 var charm = null;
 
 function Telecharm(params) {
     this.svgns = "http://www.w3.org/2000/svg";
     this.current = null;
     this.container = null;
+    this.rerenderRequested = false;
+    this.lastMousePosX = null;
+
+    this.xAxisRule = {
+        3: 3,
+        4: 4,
+        5: 5,
+        6: 6,
+        7: 6,
+        8: 4,
+        9: 4,
+        10: 5,
+        11: 5,
+        12: 6,
+        13: 6,
+        14: 6
+    };
+
+    this.months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
     this.mainChart = {
         viewBox: {
@@ -34,7 +37,8 @@ function Telecharm(params) {
             width: 0,
             height: 0
         },
-        svg: null
+        svg: null,
+        mainChartG: null
     };
 
     this.dots = {
@@ -55,7 +59,9 @@ function Telecharm(params) {
             width: 0,
             height: 0
         },
-        svg: null
+        svg: null,
+        gY: null,
+        gX: null
     };
 
     this.preview = {
@@ -75,7 +81,8 @@ function Telecharm(params) {
             beginToRender: 0,
             endToRender: 1
         },
-        svg: null
+        svg: null,
+        rects: {}
     };
 
     this.init(params);
@@ -157,6 +164,16 @@ Telecharm.prototype.getMaxs = function() {
         maxY: this.dots.maxY,
         currMaxY
     };
+};
+
+Telecharm.prototype.requestRerender = function() {
+    if (!this.rerenderRequested) {
+        requestAnimationFrame(function() {
+            this.rerenderSlider();
+            this.rerenderRequested = false;
+        }.bind(this));
+        this.rerenderRequested = true;
+    }
 };
 
 Telecharm.prototype.drawMainChart = function() {
@@ -259,6 +276,173 @@ Telecharm.prototype.drawPreviewChart = function() {
     this.container.appendChild(svg);
 };
 
+Telecharm.prototype.normalizedWidth = function(w) {
+    return w < 0 ? 0 : w;
+};
+
+Telecharm.prototype.rerenderSlider = function() {
+    let pv = this.preview,
+        diffBegin = pv.carrier.beginToRender - pv.carrier.begin,
+        diffEnd = pv.carrier.endToRender - pv.carrier.end,
+        dXBegin = pv.viewBox.width * diffBegin,
+        dXEnd = pv.viewBox.width * diffEnd,
+        vbWidth = this.mainChart.viewBox.width,
+        tmpWidth,
+        {
+            maskRectLeft,
+            maskRectCenter,
+            maskRectRight,
+            rectLeft,
+            rectLeftHandle,
+            rectCenter,
+            rectRightHandle,
+            rectRight
+        } = this.preview.rects;
+
+    if (diffBegin != 0 && diffEnd != 0) {
+        maskRectLeft.setAttribute("width", this.normalizedWidth(maskRectLeft.width.animVal.value + dXBegin));
+        maskRectCenter.setAttribute("x", maskRectCenter.x.animVal.value + dXBegin);
+        maskRectRight.setAttribute("x", maskRectRight.x.animVal.value + dXEnd);
+        maskRectRight.setAttribute("width", this.normalizedWidth(maskRectRight.width.animVal.value + dXEnd));
+
+        rectLeft.setAttribute("width", this.normalizedWidth(rectLeft.width.animVal.value + dXBegin));
+        rectLeftHandle.setAttribute("x", rectLeftHandle.x.animVal.value + dXBegin);
+        rectCenter.setAttribute("x", rectCenter.x.animVal.value + dXBegin);
+        rectRightHandle.setAttribute("x", rectRightHandle.x.animVal.value + dXEnd);
+        rectRight.setAttribute("x", rectRight.x.animVal.value - dXEnd);
+        rectRight.setAttribute("width", this.normalizedWidth(rectRight.width.animVal.value - dXEnd));
+    } else if (diffBegin != 0 && diffEnd == 0) {
+        maskRectLeft.setAttribute("width", this.normalizedWidth(maskRectLeft.width.animVal.value + dXBegin));
+        maskRectCenter.setAttribute("x", maskRectCenter.x.animVal.value + dXBegin);
+        maskRectCenter.setAttribute("width", this.normalizedWidth(maskRectCenter.width.animVal.value - dXBegin));
+
+        rectLeft.setAttribute("width", this.normalizedWidth(rectLeft.width.animVal.value + dXBegin));
+        rectLeftHandle.setAttribute("x", rectLeftHandle.x.animVal.value + dXBegin);
+        rectCenter.setAttribute("x", rectCenter.x.animVal.value + dXBegin);
+        rectCenter.setAttribute("width", this.normalizedWidth(rectCenter.width.animVal.value - dXBegin));
+    } else if (diffBegin == 0 && diffEnd != 0) {
+        maskRectCenter.setAttribute("width", this.normalizedWidth(maskRectCenter.width.animVal.value + dXEnd));
+        maskRectRight.setAttribute("x", maskRectRight.x.animVal.value + dXEnd);
+        maskRectRight.setAttribute("width", this.normalizedWidth(maskRectRight.width.animVal.value - dXEnd));
+
+        rectCenter.setAttribute("width", this.normalizedWidth(rectCenter.width.animVal.value + dXEnd));
+        rectRightHandle.setAttribute("x", rectRightHandle.x.animVal.value + dXEnd);
+        rectRight.setAttribute("x", rectRight.x.animVal.value - dXEnd);
+        rectRight.setAttribute("width", this.normalizedWidth(rectRight.width.animVal.value - dXEnd));
+    }
+
+    if (diffBegin != 0 || diffEnd != 0) {
+        let maxs = this.getMaxs();
+        this.mainChart.mainChartG.setAttribute("transform", " scale(" + 1 / (pv.carrier.end - pv.carrier.begin) + " " + (maxs.maxY / maxs.currMaxY) +") translate(" + -1 * vbWidth * pv.carrier.begin + " " + (maxs.currMaxY - maxs.maxY) + ")");
+        // mainChartG.setAttribute("transform", "translate(" + -1 * mainVBW * pv.carrier.begin + " " + (maxs.currMaxY - maxs.maxY) + ")");
+    }
+
+    this.rerenderXAxis();
+    this.rerenderYAxis();
+
+    pv.carrier.begin = pv.carrier.beginToRender;
+    pv.carrier.end = pv.carrier.endToRender;
+};
+
+Telecharm.prototype.mouseMoveHandler = function(e) {
+    let dXMouse = e.pageX - this.lastMousePosX;
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (dXMouse == 0) {
+        return;
+    }
+
+    this.lastMousePosX = e.pageX;
+
+    let pv = this.preview,
+        dX = dXMouse / this.preview.svg.width.animVal.value;
+
+    lastMousePosX = e.pageX;
+
+    let tmlEToRender, tmpBToRender;
+
+    if (dX > 0) {
+        tmlEToRender = pv.carrier.endToRender + dX;
+        pv.carrier.endToRender = tmlEToRender > 1 ? 1 : tmlEToRender;
+        pv.carrier.beginToRender += pv.carrier.endToRender - pv.carrier.end;
+    } else {
+        tmpBToRender = pv.carrier.beginToRender + dX;
+        pv.carrier.beginToRender = tmpBToRender < 0 ? 0 : tmpBToRender;
+        pv.carrier.endToRender += pv.carrier.beginToRender - pv.carrier.begin;
+    }
+
+    this.requestRerender();
+};
+
+Telecharm.prototype.leftHandlerDrag = function(e) {
+    let dXMouse = e.pageX - this.lastMousePosX;
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (dXMouse == 0) {
+        return;
+    }
+
+    this.lastMousePosX = e.pageX;
+
+    let pv = this.preview,
+        dX = dXMouse / this.preview.svg.width.animVal.value;
+
+    lastMousePosX = e.pageX;
+
+    let tmpBToRender = pv.carrier.beginToRender + dX;
+
+    if (dX > 0) {
+        pv.carrier.beginToRender = tmpBToRender >= pv.carrier.end ? pv.carrier.end : tmpBToRender;
+    } else {
+        pv.carrier.beginToRender = tmpBToRender < 0 ? 0 : tmpBToRender;
+    }
+
+    this.requestRerender();
+};
+
+Telecharm.prototype.rightHandlerDrag = function(e) {
+    let dXMouse = e.pageX - this.lastMousePosX;
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (dXMouse == 0) {
+        return;
+    }
+
+    this.lastMousePosX = e.pageX;
+
+    let pv = this.preview,
+        dX = dXMouse / this.preview.svg.width.animVal.value;
+
+    lastMousePosX = e.pageX;
+
+    let tmpEToRender = pv.carrier.endToRender + dX;
+
+    if (dX > 0) {
+        pv.carrier.endToRender = tmpEToRender > 1 ? 1 : tmpEToRender;
+    } else {
+        pv.carrier.endToRender = tmpEToRender < pv.carrier.begin ? pv.carrier.begin : tmpEToRender;
+    }
+
+    this.requestRerender();
+};
+
+Telecharm.prototype.bindHandler = function(handler) {
+    return function(e) {
+        this.lastMousePosX = e.pageX;
+        document.onmousemove = handler.bind(this);
+        document.onmouseup = function() {
+            document.onmousemove = null;
+            document.onmouseup = null;
+        };
+    }.bind(this)
+};
+
 Telecharm.prototype.drawPreviewSlider = function() {
     let pv = this.preview,
         vbHeight = pv.viewBox.height,
@@ -272,8 +456,7 @@ Telecharm.prototype.drawPreviewSlider = function() {
         mainChartSvg = this.mainChart.svg,
         sideHandleWidth = 10 * koef,
         edgeHeight = 5 * koef,
-        svg = this.preview.svg,
-        me = this;
+        svg = this.preview.svg;
 
     let mask = document.createElementNS(this.svgns, "mask");
 
@@ -379,155 +562,119 @@ Telecharm.prototype.drawPreviewSlider = function() {
     rectRight.style.fill = "#C7C7C7";
     rectRight.style.fillOpacity = sidesOpacity;
 
+    this.preview.rects = {
+        maskRectLeft,
+        maskRectCenter,
+        maskRectRight,
+        rectLeft,
+        rectLeftHandle,
+        rectCenter,
+        rectRightHandle,
+        rectRight
+    };
+
     svg.appendChild(rectRight);
 
     var mainChartG = document.getElementById("mainChart");
 
+    this.mainChart.mainChartG = mainChartG;
+
     var { width: mainVBW } = mainChartSvg.viewBox.animVal;
-    mainChartG.setAttribute("transform", "scale(" + vbWidth / (endPos - startPos) + " 1) translate(" + -1 * mainVBW * startPos / vbWidth + " 0)");
+    // mainChartG.setAttribute("transform", "scale(" + vbWidth / (endPos - startPos) + " 1) translate(" + -1 * mainVBW * startPos / vbWidth + " 0)");
 
-    var lastMousePosX;
+    rectCenter.onmousedown = this.bindHandler(this.mouseMoveHandler);
+    rectLeftHandle.onmousedown = this.bindHandler(this.leftHandlerDrag);
+    rectRightHandle.onmousedown = this.bindHandler(this.rightHandlerDrag);
+};
 
-    var mouseMoveHandler = function(e) {
-        let dXMouse = e.pageX - lastMousePosX;
+Telecharm.prototype.getXs = function() {
+    let Xs = this.dots.Xs
+        len = Xs.length,
+        dotsStart = Math.floor(len * this.preview.carrier.beginToRender),
+        dotsEnd = Math.round(len * this.preview.carrier.endToRender);
 
-        if (dXMouse == 0) {
-            return;
-        }
-
-        let pv = me.preview,
-            dX = dXMouse / me.preview.svg.offsetWidth;
-
-        lastMousePosX = e.pageX;
-
-        if (dX > 0) {
-            let tmlEToRender = pv.carrier.endToRender + dX;
-            pv.carrier.beginToRender = tmlEToRender > 1 ? 1 : tmlEToRender;
-        } else {
-            let tmpBToRender = pv.carrier.beginToRender + dX;
-            pv.carrier.beginToRender = tmpBToRender < 0 ? 0 : tmpBToRender;
-        }
+    return {
+        viewXs: Xs.slice(dotsStart, dotsEnd)
     };
+};
 
-    rerenderCener = function() {
-        maskRectLeft.setAttribute("width", maskRectLeft.width.animVal.value + dX);
-        maskRectCenter.setAttribute("x", maskRectCenter.x.animVal.value + dX);
-        maskRectRight.setAttribute("x", maskRectRight.x.animVal.value + dX);
-        maskRectRight.setAttribute("width", maskRectRight.width.animVal.value - dX);
+Telecharm.prototype.rerenderYAxis = function() {
+    let { maxY, currMaxY: currVBHeight } = this.getMaxs(),
+        Y = 0,
+        dY = 2 * currVBHeight / 11,
+        g = this.axis.gY;
 
-        rectLeft.setAttribute("width", rectLeft.width.animVal.value + dX);
-        rectLeftHandle.setAttribute("x", rectLeftHandle.x.animVal.value + dX);
-        rectCenter.setAttribute("x", rectCenter.x.animVal.value + dX);
-        rectRightHandle.setAttribute("x", rectRightHandle.x.animVal.value + dX);
-        rectRight.setAttribute("x", rectRight.x.animVal.value + dX);
-        rectRight.setAttribute("width", rectRight.width.animVal.value - dX);
+    while (g.children.length) {
+        g.children[0].remove();
+    }
 
-        let maxs = me.getMaxs();
-        mainChartG.setAttribute("transform", " scale(" + vbWidth / (endPos - startPos) + " " + (maxs.maxY / maxs.currMaxY) +") translate(" + -1 * mainVBW * (rectCenter.x.animVal.value + dX) / vbWidth + " " + (maxs.currMaxY - maxs.maxY) + ")");
+    g.setAttribute("transform", "scale(1 " + maxY/currVBHeight + ")");
 
-        rerenderXAxis();
-        rerenderYAxis();
-    };
+    for (let i = 0; i < 6 ; i++) {
+        let line = this.createLine([0, currVBHeight - Y, this.mainChart.viewBox.width, currVBHeight - Y], "#BBBBBB");
 
-    rectCenter.onmousedown = function(e) {
-        lastMousePosX = e.pageX;
-        document.onmousemove = mouseMoveHandler;
-        document.onmouseup = function() {
-            document.onmousemove = null;
-            document.onmouseup = null;
-        };
-    };
+        line.style.strokeWidth = "0.5px";
 
-    var leftHandlerDrag = function(e) {
-        let dX = koef * (e.pageX - lastMousePosX);
-        lastMousePosX = e.pageX;
+        g.appendChild(line);
 
-        if (dX > 0) {
-            dX = dX > rectCenter.width.animVal.value ? rectCenter.width.animVal.value : dX;
-        } else {
-            dX = -1 * dX > rectLeft.width.animVal.value ? -1 * rectLeft.width.animVal.value : dX;
-        }
+        let text = document.createElementNS(this.svgns, "text");
 
-        if (dX == 0) {
-            return;
-        }
+        text.setAttribute("class", "axis");
+        text.setAttribute("x", 0);
+        text.setAttribute("y", currVBHeight - Y - 5);
+        text.setAttribute("fill", "#777777");
 
-        startPos += dX;
-        pStart = startPos / vbWidth;
+        text.innerHTML = Math.round(Y);
 
-        maskRectLeft.setAttribute("width", maskRectLeft.width.animVal.value + dX);
-        maskRectCenter.setAttribute("x", maskRectCenter.x.animVal.value + dX);
-        maskRectCenter.setAttribute("width", maskRectCenter.width.animVal.value - dX);
+        g.appendChild(text);
 
-        rectLeft.setAttribute("width", rectLeft.width.animVal.value + dX);
-        rectLeftHandle.setAttribute("x", rectLeftHandle.x.animVal.value + dX);
-        rectCenter.setAttribute("x", rectCenter.x.animVal.value + dX);
-        rectCenter.setAttribute("width", rectCenter.width.animVal.value - dX);
+        Y += dY;
+    }
+};
 
-        let maxs = me.getMaxs();
-        mainChartG.setAttribute("transform", " scale(" + vbWidth / (endPos - startPos) + " " + (maxs.maxY / maxs.currMaxY) +") translate(" + -1 * mainVBW * (rectCenter.x.animVal.value + dX) / vbWidth + " " + (maxs.currMaxY - maxs.maxY) + ")");
+Telecharm.prototype.rerenderXAxis = function() {
+    var { viewXs } = this.getXs(),
+        len = viewXs.length,
+        segDotsLen, X = 0, dX, segments, startDotX,
+        vbWidth = this.mainChart.viewBox.width,
+        gX = this.axis.gX;
 
-        rerenderXAxis();
-        rerenderYAxis();
-    };
+    if (len < 15) {
+        segments = this.xAxisRule[len];
+    } else {
+        segments = len % 6 < len % 5 ? 6 : 5;
+    }
 
-    rectLeftHandle.onmousedown = function(e) {
-        lastMousePosX = e.pageX;
-        document.onmousemove = leftHandlerDrag;
-        document.onmouseup = function() {
-            document.onmousemove = null;
-            document.onmouseup = null;
-        };
-    };
+    segDotsLen = Math.floor(len / segments);
 
-    var rightHandlerDrag = function(e) {
-        let dX = koef * (e.pageX - lastMousePosX);
-        lastMousePosX = e.pageX;
+    while (gX.children.length) {
+        gX.children[0].remove();
+    }
 
-        if (dX > 0) {
-            dX = dX > rectRight.width.animVal.value ? rectRight.width.animVal.value : dX;
-        } else {
-            dX = -1 * dX > rectCenter.width.animVal.value ? -1 * rectCenter.width.animVal.value : dX;
-        }
+    dX = segDotsLen * vbWidth / len;
+    startDotX = Math.floor((len - segDotsLen * (segments - 1)) / 2);
+    X = startDotX * vbWidth / len;
 
-        if (dX == 0) {
-            return;
-        }
+    for (let i = startDotX; i < len; i += segDotsLen) {
+        let text = document.createElementNS(this.svgns, "text");
+        let date = viewXs[i];
 
-        endPos += dX;
-        pStop = endPos / vbWidth;
+        text.setAttribute("class", "axis");
+        text.setAttribute("x", X);
+        text.setAttribute("y", this.mainChart.viewBox.height - 10);
+        text.setAttribute("fill", "#777777");
 
-        maskRectCenter.setAttribute("width", maskRectCenter.width.animVal.value + dX);
-        maskRectRight.setAttribute("x", maskRectRight.x.animVal.value + dX);
-        maskRectRight.setAttribute("width", maskRectRight.width.animVal.value - dX);
+        text.innerHTML = date.getDate() + " " + this.months[date.getMonth()];
 
-        rectCenter.setAttribute("width", rectCenter.width.animVal.value + dX);
-        rectRightHandle.setAttribute("x", rectRightHandle.x.animVal.value + dX);
-        rectRight.setAttribute("x", rectRight.x.animVal.value + dX);
-        rectRight.setAttribute("width", rectRight.width.animVal.value - dX);
+        gX.appendChild(text);
 
-        let maxs = me.getMaxs();
-
-        mainChartG.setAttribute("transform", " scale(" + vbWidth / (endPos - startPos) + " " + (maxs.maxY / maxs.currMaxY) +") translate(" + -1 * mainVBW * (rectCenter.x.animVal.value + dX) / vbWidth + " " + (maxs.currMaxY - maxs.maxY) + ")");
-
-        rerenderXAxis();
-        rerenderYAxis();
-    };
-
-    rectRightHandle.onmousedown = function(e) {
-        lastMousePosX = e.pageX;
-        document.onmousemove = rightHandlerDrag;
-        document.onmouseup = function() {
-            document.onmousemove = null;
-            document.onmouseup = null;
-        };
-    };
+        X += dX;
+    }
 };
 
 Telecharm.prototype.drawAxis = function() {
     let svg = document.createElementNS(this.svgns, "svg"),
-        vbWidth, vbHeight, N, maxY, Ys, Xs,
-        me = this;
+        vbWidth, vbHeight, N, maxY, Ys, Xs;
 
     Ys = this.getCurrentYs();
     N = Ys.length;
@@ -553,95 +700,14 @@ Telecharm.prototype.drawAxis = function() {
 
     svg.appendChild(style);
 
-    rerenderYAxis = function() {
-        let { currMaxY: currVBHeight } = me.getMaxs(),
-            Y = 0;
+    this.axis.gY = document.createElementNS(this.svgns, "g");
+    this.axis.gX = document.createElementNS(this.svgns, "g");
 
-        dY = 2 * currVBHeight / 11;
+    this.rerenderYAxis();
+    this.rerenderXAxis();
 
-        while (g.children.length) {
-            g.children[0].remove();
-        }
-
-        g.setAttribute("transform", "scale(1 " + maxY/currVBHeight + ")");
-
-        for (let i = 0; i < 6 ; i++) {
-            let line = me.createLine([0, currVBHeight - Y, vbWidth, currVBHeight - Y], "#BBBBBB");
-
-            line.style.strokeWidth = "0.5px";
-
-            g.appendChild(line);
-
-            let text = document.createElementNS(me.svgns, "text");
-
-            text.setAttribute("class", "axis");
-            text.setAttribute("x", 0);
-            text.setAttribute("y", currVBHeight - Y - 5);
-            text.setAttribute("fill", "#777777");
-
-            text.innerHTML = Math.round(Y);
-
-            g.appendChild(text);
-
-            Y += dY;
-        }
-    };
-
-    getXs = function() {
-        let dotsStart = Math.floor(N * pStart),
-            dotsEnd = Math.round(N * pStop);
-
-        return {
-            viewXs: Xs.slice(dotsStart, dotsEnd)
-        };
-    };
-
-    rerenderXAxis = function() {
-        var { viewXs } = getXs(),
-            len = viewXs.length,
-            segDotsLen, X = 0, dX, segments, startDotX;
-
-        if (len < 15) {
-            segments = xRule[len];
-        } else {
-            segments = len % 6 < len % 5 ? 6 : 5;
-        }
-
-        segDotsLen = Math.floor(len / segments);
-
-        while (gX.children.length) {
-            gX.children[0].remove();
-        }
-
-        dX = segDotsLen * vbWidth / len;
-        startDotX = Math.floor((len - segDotsLen * (segments - 1)) / 2);
-        X = startDotX * vbWidth / len;
-
-        for (let i = startDotX; i < len; i += segDotsLen) {
-            let text = document.createElementNS(me.svgns, "text");
-            let date = viewXs[i];
-
-            text.setAttribute("class", "axis");
-            text.setAttribute("x", X);
-            text.setAttribute("y", vbHeight - 10);
-            text.setAttribute("fill", "#777777");
-
-            text.innerHTML = date.getDate() + " " + months[date.getMonth()];
-
-            gX.appendChild(text);
-
-            X += dX;
-        }
-    };
-
-    let g = document.createElementNS(this.svgns, "g");
-    let gX = document.createElementNS(this.svgns, "g");
-
-    rerenderYAxis();
-    rerenderXAxis();
-
-    svg.appendChild(g);
-    svg.appendChild(gX);
+    svg.appendChild(this.axis.gY);
+    svg.appendChild(this.axis.gX);
 
     this.container.appendChild(svg);
 };
