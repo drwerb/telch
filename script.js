@@ -76,10 +76,10 @@ function Telecharm(params) {
         carrier: {
             vbWidth: 0,
             vbHeight: 0,
-            begin: 0,
-            end: 1,
-            beginToRender: 0,
-            endToRender: 1
+            begin: 0.6,
+            end: 0.8,
+            beginToRender: 0.6,
+            endToRender: 0.8
         },
         svg: null,
         rects: {}
@@ -209,21 +209,29 @@ Telecharm.prototype.drawChart = function(svg, options) {
         X = 0,
         lineStroke = this.getCurrentColor(),
         lineStrokeWidth = options.lineStrokeWidth,
-        
+        background = options.background,
         maskId = options.mask;
 
     let g = document.createElementNS(this.svgns, "g");
 
     g.id = options.chartGroupId;
 
+    if (background) {
+        g.appendChild(background);
+    }
+
+    if (options.clipId) {
+        g.setAttribute("clip-path", "url(#" + options.clipId + ")");
+    }
+
+    if (maskId) {
+        g.setAttribute("mask", "url(#" + maskId + ")");
+    }
+
     for (i = 1; i < N; i++) {
         let line = this.createLine([X, vbHeight - Ys[i], X + dX, vbHeight - Ys[i + 1]], lineStroke);
         line.style.strokeWidth = lineStrokeWidth;
         line.setAttribute("vector-effect", "non-scaling-stroke");
-
-        if (maskId) {
-            line.setAttribute("mask", "url(#" + maskId + ")");
-        }
 
         g.appendChild(line);
 
@@ -263,12 +271,56 @@ Telecharm.prototype.drawPreviewChart = function() {
     svg.style.bottom = 0;
     svg.style.left = 0;
 
+    let background = document.createElementNS(this.svgns, "rect");
+
+    background.setAttribute("x", "0");
+    background.setAttribute("y", "0");
+    background.setAttribute("width", pv.viewBox.width);
+    background.setAttribute("height", pv.viewBox.height);
+
+
+    let backMask = document.createElementNS(this.svgns, "mask");
+    backMask.id = "previewBackground";
+
+    background.style.fill = "white";
+    background.style.fillOpacity = 0.5;
+
+    backMask.appendChild(background.cloneNode());
+    svg.appendChild(backMask);
+
+    background.style.fill = "#BBBBBB";
+    background.style.fillOpacity = 1;
+
+    this.drawChart(svg, {
+        viewBoxHeight: pv.viewBox.height,
+        viewBoxWidth: pv.viewBox.width,
+        lineStrokeWidth: "1px",
+        mask: "previewBackground",
+        chartGroupId: "previewChart",
+        background: background.cloneNode(),
+        clipId: "backClip"
+    });
+
+    let frontBackgroundG = document.createElementNS(this.svgns, "g");
+
+    let whiteBack = background.cloneNode();
+    whiteBack.style.fill = "#FFFFFF";
+    whiteBack.setAttribute("mask", "url(#carrierMask)")
+
+    let grayBack = background.cloneNode();
+    grayBack.style.fill = "#BBBBBB";
+
+    frontBackgroundG.appendChild(grayBack);
+    frontBackgroundG.appendChild(whiteBack);
+
     this.drawChart(svg, {
         viewBoxHeight: pv.viewBox.height,
         viewBoxWidth: pv.viewBox.width,
         lineStrokeWidth: "1px",
         mask: "sliderMask",
-        chartGroupId: "previewChart"
+        chartGroupId: "previewChart",
+        background: frontBackgroundG,
+        clipId: "frontClip"
     });
 
     this.drawPreviewSlider();
@@ -289,46 +341,27 @@ Telecharm.prototype.rerenderSlider = function() {
         vbWidth = this.mainChart.viewBox.width,
         tmpWidth,
         {
-            maskRectLeft,
-            maskRectCenter,
-            maskRectRight,
-            rectLeft,
-            rectLeftHandle,
-            rectCenter,
-            rectRightHandle,
-            rectRight
+            clipRect,
+            carrierMaskRect,
+            handlerRect
         } = this.preview.rects;
 
     if (diffBegin != 0 && diffEnd != 0) {
-        maskRectLeft.setAttribute("width", this.normalizedWidth(maskRectLeft.width.animVal.value + dXBegin));
-        maskRectCenter.setAttribute("x", maskRectCenter.x.animVal.value + dXBegin);
-        maskRectRight.setAttribute("x", maskRectRight.x.animVal.value + dXEnd);
-        maskRectRight.setAttribute("width", this.normalizedWidth(maskRectRight.width.animVal.value + dXEnd));
-
-        rectLeft.setAttribute("width", this.normalizedWidth(rectLeft.width.animVal.value + dXBegin));
-        rectLeftHandle.setAttribute("x", rectLeftHandle.x.animVal.value + dXBegin);
-        rectCenter.setAttribute("x", rectCenter.x.animVal.value + dXBegin);
-        rectRightHandle.setAttribute("x", rectRightHandle.x.animVal.value + dXEnd);
-        rectRight.setAttribute("x", rectRight.x.animVal.value - dXEnd);
-        rectRight.setAttribute("width", this.normalizedWidth(rectRight.width.animVal.value - dXEnd));
+        clipRect.setAttribute("x", clipRect.x.animVal.value + dXBegin);
+        carrierMaskRect.setAttribute("x", carrierMaskRect.x.animVal.value + dXBegin);
+        handlerRect.setAttribute("x", handlerRect.x.animVal.value + dXBegin);
     } else if (diffBegin != 0 && diffEnd == 0) {
-        maskRectLeft.setAttribute("width", this.normalizedWidth(maskRectLeft.width.animVal.value + dXBegin));
-        maskRectCenter.setAttribute("x", maskRectCenter.x.animVal.value + dXBegin);
-        maskRectCenter.setAttribute("width", this.normalizedWidth(maskRectCenter.width.animVal.value - dXBegin));
+        clipRect.setAttribute("x", clipRect.x.animVal.value + dXBegin);
+        carrierMaskRect.setAttribute("x", carrierMaskRect.x.animVal.value + dXBegin);
+        handlerRect.setAttribute("x", handlerRect.x.animVal.value + dXBegin);
 
-        rectLeft.setAttribute("width", this.normalizedWidth(rectLeft.width.animVal.value + dXBegin));
-        rectLeftHandle.setAttribute("x", rectLeftHandle.x.animVal.value + dXBegin);
-        rectCenter.setAttribute("x", rectCenter.x.animVal.value + dXBegin);
-        rectCenter.setAttribute("width", this.normalizedWidth(rectCenter.width.animVal.value - dXBegin));
+        clipRect.setAttribute("width", clipRect.width.animVal.value - dXBegin);
+        carrierMaskRect.setAttribute("width", carrierMaskRect.width.animVal.value - dXBegin);
+        handlerRect.setAttribute("width", handlerRect.width.animVal.value - dXBegin);
     } else if (diffBegin == 0 && diffEnd != 0) {
-        maskRectCenter.setAttribute("width", this.normalizedWidth(maskRectCenter.width.animVal.value + dXEnd));
-        maskRectRight.setAttribute("x", maskRectRight.x.animVal.value + dXEnd);
-        maskRectRight.setAttribute("width", this.normalizedWidth(maskRectRight.width.animVal.value - dXEnd));
-
-        rectCenter.setAttribute("width", this.normalizedWidth(rectCenter.width.animVal.value + dXEnd));
-        rectRightHandle.setAttribute("x", rectRightHandle.x.animVal.value + dXEnd);
-        rectRight.setAttribute("x", rectRight.x.animVal.value - dXEnd);
-        rectRight.setAttribute("width", this.normalizedWidth(rectRight.width.animVal.value - dXEnd));
+        clipRect.setAttribute("width", clipRect.width.animVal.value + dXEnd);
+        carrierMaskRect.setAttribute("width", carrierMaskRect.width.animVal.value + dXEnd);
+        handlerRect.setAttribute("width", handlerRect.width.animVal.value + dXEnd);
     }
 
     if (diffBegin != 0 || diffEnd != 0) {
@@ -432,10 +465,21 @@ Telecharm.prototype.rightHandlerDrag = function(e) {
     this.requestRerender();
 };
 
-Telecharm.prototype.bindHandler = function(handler) {
+Telecharm.prototype.bindHandler = function() {
     return function(e) {
         this.lastMousePosX = e.pageX;
-        document.onmousemove = handler.bind(this);
+
+        let pos = e.offsetX * this.preview.viewBox.width / this.container.offsetWidth,
+            rect = this.preview.rects.carrierMaskRect;
+
+        if (pos <= rect.x.animVal.value) {
+            document.onmousemove = this.leftHandlerDrag.bind(this);
+        } else if (pos >= rect.x.animVal.value + rect.width.animVal.value) {
+            document.onmousemove = this.rightHandlerDrag.bind(this);
+        } else {
+            document.onmousemove = this.mouseMoveHandler.bind(this);
+        }
+
         document.onmouseup = function() {
             document.onmousemove = null;
             document.onmouseup = null;
@@ -458,122 +502,48 @@ Telecharm.prototype.drawPreviewSlider = function() {
         edgeHeight = 5 * koef,
         svg = this.preview.svg;
 
+    let carrierClip = document.createElementNS(this.svgns, "clipPath");
+    carrierClip.id = "frontClip";
+
+    let clipRect = document.createElementNS(this.svgns, "rect");
+
+    clipRect.setAttribute("x", startPos);
+    clipRect.setAttribute("y", "0");
+    clipRect.setAttribute("width", endPos - startPos);
+    clipRect.setAttribute("height", vbHeight);
+
+    carrierClip.appendChild(clipRect);
+
+    svg.appendChild(carrierClip);
+
+    let handlerRect = clipRect.cloneNode();
+    handlerRect.style.fillOpacity = 0;
+
+    svg.appendChild(handlerRect);
+
     let mask = document.createElementNS(this.svgns, "mask");
 
-    mask.id = maskId;
+    mask.id = "carrierMask";
 
-    let maskRectLeft = document.createElementNS(this.svgns, "rect");
+    let carrierMaskRect = document.createElementNS(this.svgns, "rect");
 
-    maskRectLeft.setAttribute("x", "0");
-    maskRectLeft.setAttribute("y", "0");
-    maskRectLeft.setAttribute("width", startPos);
-    maskRectLeft.setAttribute("height", vbHeight);
+    carrierMaskRect.setAttribute("x", startPos + 1 + sideHandleWidth);
+    carrierMaskRect.setAttribute("y", edgeHeight);
+    carrierMaskRect.setAttribute("width", endPos - startPos - 2 * sideHandleWidth);
+    carrierMaskRect.setAttribute("height", vbHeight - 2 * edgeHeight);
 
-    maskRectLeft.style.fill = "white";
-    maskRectLeft.style.fillOpacity = sidesOpacity;
+    carrierMaskRect.style.fill = "white";
+    carrierMaskRect.style.fillOpacity = 1;
 
-    mask.appendChild(maskRectLeft);
+    mask.appendChild(carrierMaskRect);
 
-    let maskRectCenter = document.createElementNS(this.svgns, "rect");
-
-    maskRectCenter.setAttribute("x", startPos + 1 + sideHandleWidth);
-    maskRectCenter.setAttribute("y", edgeHeight);
-    maskRectCenter.setAttribute("width", endPos - startPos - 2 * sideHandleWidth);
-    maskRectCenter.setAttribute("height", vbHeight - 2 * edgeHeight);
-
-    maskRectCenter.style.fill = "white";
-    maskRectCenter.style.fillOpacity = 0.7;
-
-    mask.appendChild(maskRectCenter);
-
-    let maskRectRight = document.createElementNS(this.svgns, "rect");
-
-    maskRectRight.setAttribute("x", endPos);
-    maskRectRight.setAttribute("y", "0");
-    maskRectRight.setAttribute("width", vbWidth - endPos);
-    maskRectRight.setAttribute("height", vbHeight);
-
-    maskRectRight.style.fill = "white";
-    maskRectRight.style.fillOpacity = sidesOpacity;
-
-    mask.appendChild(maskRectRight);
     svg.appendChild(mask);
 
-    // left
-    let rectLeft = document.createElementNS(this.svgns, "rect");
-
-    rectLeft.setAttribute("x", "0");
-    rectLeft.setAttribute("y", "0");
-    rectLeft.setAttribute("width", startPos);
-    rectLeft.setAttribute("height", vbHeight);
-    rectLeft.setAttribute("mask", "url(#" + maskId + ")");
-
-    rectLeft.style.fill = "#C7C7C7";
-    rectLeft.style.fillOpacity = sidesOpacity;
-
-    svg.appendChild(rectLeft);
-
-    let rectCenter = document.createElementNS(this.svgns, "rect");
-
-    rectCenter.setAttribute("x", startPos + 1);
-    rectCenter.setAttribute("y", "0");
-    rectCenter.setAttribute("width", endPos - startPos);
-    rectCenter.setAttribute("height", vbHeight);
-    rectCenter.setAttribute("mask", "url(#" + maskId + ")");
-
-    rectCenter.style.fillOpacity = 0.8;
-    rectCenter.style.fill = "#C7C7C7";
-
-    svg.appendChild(rectCenter);
-
-    let rectLeftHandle = document.createElementNS(this.svgns, "rect");
-
-    rectLeftHandle.setAttribute("x", startPos + 1);
-    rectLeftHandle.setAttribute("y", "0");
-    rectLeftHandle.setAttribute("width", sideHandleWidth);
-    rectLeftHandle.setAttribute("height", vbHeight);
-    rectLeftHandle.setAttribute("mask", "url(#" + maskId + ")");
-
-    rectLeftHandle.style.fillOpacity = 0.1;
-
-    svg.appendChild(rectLeftHandle);
-
-    let rectRightHandle = document.createElementNS(this.svgns, "rect");
-
-    rectRightHandle.setAttribute("x", endPos - sideHandleWidth);
-    rectRightHandle.setAttribute("y", "0");
-    rectRightHandle.setAttribute("width", sideHandleWidth);
-    rectRightHandle.setAttribute("height", vbHeight);
-    rectRightHandle.setAttribute("mask", "url(#" + maskId + ")");
-
-    rectRightHandle.style.fillOpacity = 0;
-
-    svg.appendChild(rectRightHandle);
-
-    // right
-    let rectRight = document.createElementNS(this.svgns, "rect");
-
-    rectRight.setAttribute("x", endPos);
-    rectRight.setAttribute("y", "0");
-    rectRight.setAttribute("width", vbWidth - endPos);
-    rectRight.setAttribute("height", vbHeight);
-    rectRight.setAttribute("mask", "url(#" + maskId + ")");
-
-    rectRight.style.fill = "#C7C7C7";
-    rectRight.style.fillOpacity = sidesOpacity;
-
     this.preview.rects = {
-        maskRectLeft,
-        maskRectCenter,
-        maskRectRight,
-        rectLeft,
-        rectLeftHandle,
-        rectCenter,
-        rectRightHandle,
-        rectRight
+        clipRect,
+        carrierMaskRect,
+        handlerRect
     };
-
-    svg.appendChild(rectRight);
 
     var mainChartG = document.getElementById("mainChart");
 
@@ -582,9 +552,9 @@ Telecharm.prototype.drawPreviewSlider = function() {
     var { width: mainVBW } = mainChartSvg.viewBox.animVal;
     // mainChartG.setAttribute("transform", "scale(" + vbWidth / (endPos - startPos) + " 1) translate(" + -1 * mainVBW * startPos / vbWidth + " 0)");
 
-    rectCenter.onmousedown = this.bindHandler(this.mouseMoveHandler);
-    rectLeftHandle.onmousedown = this.bindHandler(this.leftHandlerDrag);
-    rectRightHandle.onmousedown = this.bindHandler(this.rightHandlerDrag);
+    handlerRect.onmousedown = this.bindHandler();
+    // rectLeftHandle.onmousedown = this.bindHandler(this.leftHandlerDrag);
+    // rectRightHandle.onmousedown = this.bindHandler(this.rightHandlerDrag);
 };
 
 Telecharm.prototype.getXs = function() {
@@ -614,6 +584,7 @@ Telecharm.prototype.rerenderYAxis = function() {
         let line = this.createLine([0, currVBHeight - Y, this.mainChart.viewBox.width, currVBHeight - Y], "#BBBBBB");
 
         line.style.strokeWidth = "0.5px";
+        line.setAttribute("vector-effect", "non-scaling-stroke");
 
         g.appendChild(line);
 
@@ -623,6 +594,43 @@ Telecharm.prototype.rerenderYAxis = function() {
         text.setAttribute("x", 0);
         text.setAttribute("y", currVBHeight - Y - 5);
         text.setAttribute("fill", "#777777");
+        text.setAttribute("vector-effect", "non-scaling-stroke");
+
+        text.innerHTML = Math.round(Y);
+
+        g.appendChild(text);
+
+        Y += dY;
+    }
+};
+
+Telecharm.prototype.fadeOutYAxis = function(progress, scale) {
+    let { maxY, currMaxY: currVBHeight } = this.getMaxs(),
+        Y = 0,
+        dY = 2 * currVBHeight / 11,
+        g = this.axis.gY;
+
+    while (g.children.length) {
+        g.children[0].remove();
+    }
+
+    g.setAttribute("transform", "scale(1 " + maxY/currVBHeight + ")");
+
+    for (let i = 0; i < 6 ; i++) {
+        let line = this.createLine([0, currVBHeight - Y, this.mainChart.viewBox.width, currVBHeight - Y], "#BBBBBB");
+
+        line.style.strokeWidth = "0.5px";
+        line.setAttribute("vector-effect", "non-scaling-stroke");
+
+        g.appendChild(line);
+
+        let text = document.createElementNS(this.svgns, "text");
+
+        text.setAttribute("class", "axis");
+        text.setAttribute("x", 0);
+        text.setAttribute("y", currVBHeight - Y - 5);
+        text.setAttribute("fill", "#777777");
+        text.setAttribute("vector-effect", "non-scaling-stroke");
 
         text.innerHTML = Math.round(Y);
 
