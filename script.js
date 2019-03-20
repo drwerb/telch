@@ -362,10 +362,10 @@ Telecharm.prototype.rerenderSlider = function() {
         handlerRect.setAttribute("width", handlerRect.width.animVal.value + dXEnd);
     }
 
-    if (diffBegin != 0 || diffEnd != 0) {
-        let maxs = this.getMaxs();
-        this.mainChart.mainChartG.setAttribute("transform", " scale(" + 1 / (pv.carrier.end - pv.carrier.begin) + " " + (maxs.maxY / maxs.currMaxY) +") translate(" + -1 * vbWidth * pv.carrier.begin + " " + (maxs.currMaxY - maxs.maxY) + ")");
-    }
+    // if (diffBegin != 0 || diffEnd != 0) {
+    //     let maxs = this.getMaxs();
+    //     this.mainChart.mainChartG.setAttribute("transform", " scale(" + 1 / (pv.carrier.end - pv.carrier.begin) + " " + (maxs.maxY / maxs.currMaxY) +") translate(" + -1 * vbWidth * pv.carrier.begin + " " + (maxs.currMaxY - maxs.maxY) + ")");
+    // }
 
     this.rerenderXAxis();
     // this.rerenderYAxis();
@@ -465,10 +465,16 @@ Telecharm.prototype.rightHandlerDrag = function(e) {
 
 Telecharm.prototype.bindHandler = function() {
     return function(e) {
-        var { currMaxY } = this.getMaxs(),
+        var { maxY, currMaxY } = this.getMaxs(),
             gT = this.axis.gYText,
             gL = this.axis.gYLines,
-            scaleY = this.axis.scaleY;
+            scaleY = this.axis.scaleY,
+            pv = this.preview,
+            prevScaleX = 1 / (pv.carrier.end - pv.carrier.begin),
+            prevScaleY = maxY / currMaxY,
+            vbWidth = this.mainChart.viewBox.width,
+            prevTranslateX = -1 * vbWidth * pv.carrier.begin,
+            prevTranslateY = currMaxY - maxY;;
 
         this.lastMousePosX = e.pageX;
 
@@ -484,7 +490,13 @@ Telecharm.prototype.bindHandler = function() {
         }
 
         document.onmouseup = function() {
-            this.animateYAxis(currMaxY, scaleY);
+            this.animateYAxis({
+                prevMaxY: currMaxY,
+                prevScaleX,
+                prevScaleY,
+                prevTranslateX,
+                prevTranslateY
+            });
             document.onmousemove = null;
             document.onmouseup = null;
         }.bind(this);
@@ -625,15 +637,9 @@ Telecharm.prototype.fadeOutYAxis = function(opts) {
         gT = this.axis.gYText,
         gL = this.axis.gYLines,
         len = gT.children.length,
-        {
-            startScale,
-            prevScale,
-            // targetScale,
-            progress,
-            prevMaxY
-        } = opts,
-        targetScale = currVBHeight / prevMaxY,
-        scaleY = 1 + (targetScale - startScale) * progress,
+        progress = opts.progress,
+        targetScale = opts.prevMaxY / currVBHeight ,
+        scaleY = 1 + (targetScale - 1) * progress,
         scaleY2 = scaleY / targetScale;
 
     gLOld.setAttribute("transform", "translate(0 " + maxY * (1 - scaleY) + ") scale(1 " + scaleY + ")");
@@ -641,7 +647,7 @@ Telecharm.prototype.fadeOutYAxis = function(opts) {
 
     for (let i = 0; i < len; i++) {
         let c = gTOld.children[i];
-        c.setAttribute("y", c.y.animVal[0].value * scaleY / prevScale);
+        c.setAttribute("y", c.y.animVal[0].value * scaleY / opts.prevScale);
     }
 
     gTOld.setAttribute("transform", "translate(0 " + maxY * (1 - scaleY) + ")");
@@ -664,13 +670,44 @@ Telecharm.prototype.fadeOutYAxis = function(opts) {
     return opts;
 };
 
-Telecharm.prototype.animateYAxis = function(prevMaxY) {
-    var { currMaxY } = this.getMaxs(),
+Telecharm.prototype.smoothlyUpdateChart = function(opts) {
+    let {
+            progress,
+            maxs,
+            prevScaleX,
+            prevScaleY,
+            prevTranslateX,
+            prevTranslateY
+        } = opts,
+        pv = this.preview,
+        targetScaleX = 1 / (pv.carrier.end - pv.carrier.begin),
+        targetScaleY = (maxs.maxY / maxs.currMaxY),
+        vbWidth = this.mainChart.viewBox.width,
+        targetTranslateX = -1 * vbWidth * pv.carrier.begin,
+        targetTranslateY = (maxs.currMaxY - maxs.maxY)
+        currentScaleX = prevScaleX + (targetScaleX - prevScaleX) * progress,
+        currentScaleY = prevScaleY + (targetScaleY - prevScaleY) * progress,
+        currentTranslateX = prevTranslateX + (targetTranslateX - prevTranslateX) * progress,
+        currentTranslateY = prevTranslateY + (targetTranslateY - prevTranslateY) * progress;
+
+    this.mainChart.mainChartG.setAttribute("transform", " scale(" + currentScaleX + " " + currentScaleY +") translate(" + currentTranslateX + " " + currentTranslateY + ")");
+
+};
+
+Telecharm.prototype.animateYAxis = function(opts) {
+    var maxs = this.getMaxs(),
         gL = this.axis.gYLines,
         gT = this.axis.gYText,
         Y = 0,
-        dY = 2 * currMaxY / 11,
-        len = gT.children.length;
+        dY = 2 * maxs.currMaxY / 11,
+        len = gT.children.length,
+        {
+            prevMaxY,
+            prevScaleX,
+            prevScaleY,
+            prevTranslateX,
+            prevTranslateY
+        } = opts;
 
     this.axis.gYLines = gL.cloneNode(true);
     this.axis.gYText = gT.cloneNode(true);
@@ -684,12 +721,14 @@ Telecharm.prototype.animateYAxis = function(prevMaxY) {
     this.axis.svg.appendChild(this.axis.gYLines);
     this.axis.svg.appendChild(this.axis.gYText);
 
+
     var animF = function(opts) {
         requestAnimationFrame(function(timestamp) {
             let progress = (timestamp - opts.start) / opts.duration;
 
             opts.progress = progress > 1 ? 1 : progress;
             opts = this.fadeOutYAxis(opts);
+            this.smoothlyUpdateChart(opts);
 
             if (progress < 1) {
                 animF(opts);
@@ -709,7 +748,12 @@ Telecharm.prototype.animateYAxis = function(prevMaxY) {
         targetScale: this.mainChart.viewBox.height/prevMaxY,
         gLOld: gL,
         gTOld: gT,
-        prevMaxY: prevMaxY
+        prevMaxY: prevMaxY,
+        maxs: maxs,
+        prevScaleX,
+        prevScaleY,
+        prevTranslateX,
+        prevTranslateY
     });
 };
 
