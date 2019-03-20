@@ -1,7 +1,3 @@
-var rerenderYAxis, rerenderXAxis, renewYMax, pStart = 0.8, pStop = 0.9, getXs;
-
-var rerenderLeft, rerenderCener, rerenderRight, rerenderSlider;
-
 var charm = null;
 
 function Telecharm(params) {
@@ -60,8 +56,10 @@ function Telecharm(params) {
             height: 0
         },
         svg: null,
-        gY: null,
-        gX: null
+        gYLines: null,
+        gYText: null,
+        gX: null,
+        scaleY: 1
     };
 
     this.preview = {
@@ -367,11 +365,11 @@ Telecharm.prototype.rerenderSlider = function() {
     if (diffBegin != 0 || diffEnd != 0) {
         let maxs = this.getMaxs();
         this.mainChart.mainChartG.setAttribute("transform", " scale(" + 1 / (pv.carrier.end - pv.carrier.begin) + " " + (maxs.maxY / maxs.currMaxY) +") translate(" + -1 * vbWidth * pv.carrier.begin + " " + (maxs.currMaxY - maxs.maxY) + ")");
-        // mainChartG.setAttribute("transform", "translate(" + -1 * mainVBW * pv.carrier.begin + " " + (maxs.currMaxY - maxs.maxY) + ")");
     }
 
     this.rerenderXAxis();
-    this.rerenderYAxis();
+    // this.rerenderYAxis();
+    // this.animateYAxis();
 
     pv.carrier.begin = pv.carrier.beginToRender;
     pv.carrier.end = pv.carrier.endToRender;
@@ -467,6 +465,11 @@ Telecharm.prototype.rightHandlerDrag = function(e) {
 
 Telecharm.prototype.bindHandler = function() {
     return function(e) {
+        var { currMaxY } = this.getMaxs(),
+            gT = this.axis.gYText,
+            gL = this.axis.gYLines,
+            scaleY = this.axis.scaleY;
+
         this.lastMousePosX = e.pageX;
 
         let pos = e.offsetX * this.preview.viewBox.width / this.container.offsetWidth,
@@ -481,9 +484,10 @@ Telecharm.prototype.bindHandler = function() {
         }
 
         document.onmouseup = function() {
+            this.animateYAxis(currMaxY, scaleY);
             document.onmousemove = null;
             document.onmouseup = null;
-        };
+        }.bind(this);
     }.bind(this)
 };
 
@@ -568,17 +572,21 @@ Telecharm.prototype.getXs = function() {
     };
 };
 
-Telecharm.prototype.rerenderYAxis = function() {
+Telecharm.prototype.rerenderYAxis = function(scY) {
     let { maxY, currMaxY: currVBHeight } = this.getMaxs(),
         Y = 0,
         dY = 2 * currVBHeight / 11,
-        g = this.axis.gY;
+        gL = this.axis.gYLines = document.createElementNS(this.svgns, "g"),
+        gT = this.axis.gYText = document.createElementNS(this.svgns, "g"),
+        scaleY = scY ? scY : maxY/currVBHeight;
 
-    while (g.children.length) {
-        g.children[0].remove();
-    }
+    this.axis.scaleY = scaleY;
 
-    g.setAttribute("transform", "scale(1 " + maxY/currVBHeight + ")");
+    // if (scY) {
+    //     gL.setAttribute("transform", "translate(0 " + maxY * (1 - scaleY) + ") scale(1 " + scaleY + ")");
+    // } else {
+    //     gL.setAttribute("transform", "scale(1 " + scaleY + ")");
+    // }
 
     for (let i = 0; i < 6 ; i++) {
         let line = this.createLine([0, currVBHeight - Y, this.mainChart.viewBox.width, currVBHeight - Y], "#BBBBBB");
@@ -586,58 +594,123 @@ Telecharm.prototype.rerenderYAxis = function() {
         line.style.strokeWidth = "0.5px";
         line.setAttribute("vector-effect", "non-scaling-stroke");
 
-        g.appendChild(line);
+        gL.appendChild(line);
 
         let text = document.createElementNS(this.svgns, "text");
 
         text.setAttribute("class", "axis");
         text.setAttribute("x", 0);
-        text.setAttribute("y", currVBHeight - Y - 5);
+        text.setAttribute("y", (currVBHeight - Y - 5) * scaleY);
         text.setAttribute("fill", "#777777");
         text.setAttribute("vector-effect", "non-scaling-stroke");
 
         text.innerHTML = Math.round(Y);
 
-        g.appendChild(text);
+        gT.appendChild(text);
 
         Y += dY;
     }
+
+    this.axis.svg.appendChild(this.axis.gYLines);
+    this.axis.svg.appendChild(this.axis.gYText);
 };
 
-Telecharm.prototype.fadeOutYAxis = function(progress, scale) {
+Telecharm.prototype.fadeOutYAxis = function(opts) {
     let { maxY, currMaxY: currVBHeight } = this.getMaxs(),
         Y = 0,
         dY = 2 * currVBHeight / 11,
-        g = this.axis.gY;
+        gTOld = opts.gTOld,
+        gLOld = opts.gLOld,
+        lenOld = gTOld.children.length,
+        gT = this.axis.gYText,
+        gL = this.axis.gYLines,
+        len = gT.children.length,
+        {
+            startScale,
+            prevScale,
+            // targetScale,
+            progress,
+            prevMaxY
+        } = opts,
+        targetScale = currVBHeight / prevMaxY,
+        scaleY = 1 + (targetScale - startScale) * progress,
+        scaleY2 = scaleY / targetScale;
 
-    while (g.children.length) {
-        g.children[0].remove();
+    gLOld.setAttribute("transform", "translate(0 " + maxY * (1 - scaleY) + ") scale(1 " + scaleY + ")");
+    gLOld.style.opacity = 1 - progress;
+
+    for (let i = 0; i < len; i++) {
+        let c = gTOld.children[i];
+        c.setAttribute("y", c.y.animVal[0].value * scaleY / prevScale);
     }
 
-    g.setAttribute("transform", "scale(1 " + maxY/currVBHeight + ")");
+    gTOld.setAttribute("transform", "translate(0 " + maxY * (1 - scaleY) + ")");
+    gTOld.style.opacity = 1 - progress;
 
-    for (let i = 0; i < 6 ; i++) {
-        let line = this.createLine([0, currVBHeight - Y, this.mainChart.viewBox.width, currVBHeight - Y], "#BBBBBB");
+    gL.setAttribute("transform", "translate(0 " + maxY * (1 - scaleY2) + ") scale(1 " + scaleY2 + ")");
+    gL.style.opacity = progress;
 
-        line.style.strokeWidth = "0.5px";
-        line.setAttribute("vector-effect", "non-scaling-stroke");
+    for (let i = 0; i < len; i++) {
+        let c = gT.children[i];
+        c.setAttribute("y", c.y.animVal[0].value * scaleY2 / opts.prevScale2);
+    }
 
-        g.appendChild(line);
+    gT.setAttribute("transform", "translate(0 " + maxY * (1 - scaleY2) + ")");
+    gT.style.opacity = progress;
 
-        let text = document.createElementNS(this.svgns, "text");
+    opts.prevScale = scaleY;
+    opts.prevScale2 = scaleY2;
 
-        text.setAttribute("class", "axis");
-        text.setAttribute("x", 0);
-        text.setAttribute("y", currVBHeight - Y - 5);
-        text.setAttribute("fill", "#777777");
-        text.setAttribute("vector-effect", "non-scaling-stroke");
+    return opts;
+};
 
-        text.innerHTML = Math.round(Y);
+Telecharm.prototype.animateYAxis = function(prevMaxY) {
+    var { currMaxY } = this.getMaxs(),
+        gL = this.axis.gYLines,
+        gT = this.axis.gYText,
+        Y = 0,
+        dY = 2 * currMaxY / 11,
+        len = gT.children.length;
 
-        g.appendChild(text);
+    this.axis.gYLines = gL.cloneNode(true);
+    this.axis.gYText = gT.cloneNode(true);
+
+    for (let i = 0; i < len ; i++) {
+        this.axis.gYText.children[i].innerHTML = Math.round(Y);
 
         Y += dY;
     }
+
+    this.axis.svg.appendChild(this.axis.gYLines);
+    this.axis.svg.appendChild(this.axis.gYText);
+
+    var animF = function(opts) {
+        requestAnimationFrame(function(timestamp) {
+            let progress = (timestamp - opts.start) / opts.duration;
+
+            opts.progress = progress > 1 ? 1 : progress;
+            opts = this.fadeOutYAxis(opts);
+
+            if (progress < 1) {
+                animF(opts);
+            } else {
+                opts.gLOld.remove();
+                opts.gTOld.remove();
+            }
+        }.bind(this))
+    }.bind(this);
+
+    animF({
+        start: performance.now(),
+        duration: 300,
+        startScale: 1,
+        prevScale: 1,
+        prevScale2: 1,
+        targetScale: this.mainChart.viewBox.height/prevMaxY,
+        gLOld: gL,
+        gTOld: gT,
+        prevMaxY: prevMaxY
+    });
 };
 
 Telecharm.prototype.rerenderXAxis = function() {
@@ -681,7 +754,7 @@ Telecharm.prototype.rerenderXAxis = function() {
 };
 
 Telecharm.prototype.drawAxis = function() {
-    let svg = document.createElementNS(this.svgns, "svg"),
+    let svg = this.axis.svg = document.createElementNS(this.svgns, "svg"),
         vbWidth, vbHeight, N, maxY, Ys, Xs;
 
     Ys = this.getCurrentYs();
@@ -708,13 +781,11 @@ Telecharm.prototype.drawAxis = function() {
 
     svg.appendChild(style);
 
-    this.axis.gY = document.createElementNS(this.svgns, "g");
     this.axis.gX = document.createElementNS(this.svgns, "g");
 
     this.rerenderYAxis();
     this.rerenderXAxis();
 
-    svg.appendChild(this.axis.gY);
     svg.appendChild(this.axis.gX);
 
     this.container.appendChild(svg);
