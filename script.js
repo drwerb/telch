@@ -4,6 +4,8 @@ function Telecharm(params) {
     this.svgns = "http://www.w3.org/2000/svg";
     this.current = null;
     this.container = null;
+    this.containerSvg = null;
+    this.containerBtns = null;
     this.rerenderRequested = false;
     this.lastMousePosX = null;
 
@@ -34,7 +36,7 @@ function Telecharm(params) {
             height: 0
         },
         svg: null,
-        mainChartG: null
+        mainChartG: {}
     };
 
     this.dots = {
@@ -80,8 +82,11 @@ function Telecharm(params) {
             endToRender: 0.8
         },
         svg: null,
-        rects: {}
+        rects: {},
+        fontSize: "8px"
     };
+
+    this.buttons = {};
 
     this.init(params);
 }
@@ -90,19 +95,43 @@ Telecharm.prototype.init = function(params) {
     let mc = this.mainChart,
         pv = this.preview,
         ax = this.axis,
-        Ys = params.data.columns[1];
-        axisYName = Ys[0],
         container = document.getElementById(params.container),
-        cW = container.offsetWidth,
-        cH = container.offsetHeight;
+        cW, cH,
+        containerSvg = document.createElement("div"),
+        containerBtns = document.createElement("div");
 
+    container.appendChild(containerSvg);
+    container.appendChild(containerBtns);
 
     this.container = container;
+    this.containerSvg = containerSvg;
+    this.containerBtns = containerBtns;
+
+    containerSvg.style.width = "100%";
+    containerSvg.style.height = (100 * 10 / 11) + "%";
+    containerSvg.style.position = "absolute";
+    containerSvg.style.top = 0;
+    containerSvg.style.left = 0;
+    containerSvg.style.overflow = "hidden";
+
+    containerBtns.style.width = "100%";
+    containerBtns.style.height = (100 * 1 / 11) + "%";
+    containerBtns.style.position = "absolute";
+    containerBtns.style.bottom = 0;
+    containerBtns.style.left = 0;
+    containerBtns.style.overflow = "hidden";
+
+    cW = containerSvg.offsetWidth;
+    cH = containerSvg.offsetHeight;
 
     mc.element.width = "100%";
-    mc.element.height = (1000 / 11) + "%";
+    mc.element.height = (100 * 10 / 11) + "%";
     this.setXs(params.data.columns[0].slice(1).map(d => new Date(d)));
-    this.setYs(Ys[0], Ys.slice(1), params.data.colors[axisYName]);
+    for (let i = 1; i < params.data.columns.length; i++) {
+        let Ys = params.data.columns[i],
+            axisYName = Ys[0];
+        this.setYs(axisYName, Ys.slice(1), params.data.colors[axisYName]);
+    }
     mc.viewBox.height = this.dots.maxY;
     mc.viewBox.width = this.dots.maxY * cW / (10 * cH / 11);
 
@@ -112,13 +141,14 @@ Telecharm.prototype.init = function(params) {
     ax.viewBox.width = mc.viewBox.width;
 
     pv.element.width = "100%";
-    pv.element.height = (100 / 11) + "%";
+    pv.element.height = (100 * 1 / 11) + "%";
     pv.viewBox.height = this.dots.maxY;
     pv.viewBox.width = pv.viewBox.height * cW / (cH / 11);
 
     this.drawAxis();
     this.drawMainChart();
     this.drawPreviewChart();
+    this.drawButtons();
 };
 
 Telecharm.prototype.setXs = function(Xs) {
@@ -156,7 +186,11 @@ Telecharm.prototype.getMaxs = function() {
         N = Ys.length,
         dotsStart = Math.floor(N * this.preview.carrier.begin),
         dotsEnd = Math.round(N * this.preview.carrier.end),
-        currMaxY = Math.max(...Ys.slice(dotsStart, dotsEnd));
+        currMaxY = -Infinity;
+
+    this.dots.dislayedCharts.forEach(name => {
+        currMaxY = Math.max(currMaxY, ...this.dots.Ys[name].slice(dotsStart, dotsEnd));
+    });
 
     return {
         maxY: this.dots.maxY,
@@ -189,56 +223,87 @@ Telecharm.prototype.drawMainChart = function() {
     svg.style.top = 0;
     svg.style.left = 0;
 
-    this.drawChart(svg, {
-        viewBoxHeight: mc.viewBox.height,
-        viewBoxWidth: mc.viewBox.width,
-        lineStrokeWidth: "1px",
-        chartGroupId: "mainChart"
+    this.dots.dislayedCharts.forEach(name => {
+        let groupName = "mainChart_" + name;
+        this.current = name;
+
+        this.mainChart.mainChartG[name] = this.drawChart(svg, {
+            viewBoxHeight: mc.viewBox.height,
+            viewBoxWidth: mc.viewBox.width,
+            lineStrokeWidth: "3px",
+            chartGroupId: groupName
+        });
     });
 
-    this.container.appendChild(svg);
+    this.containerSvg.appendChild(svg);
 }
 
-Telecharm.prototype.drawChart = function(svg, options) {
+Telecharm.prototype.drawChart = function(parentEl, options) {
     let Ys = this.getCurrentYs(),
         N = Ys.length - 1,
         vbHeight = options.viewBoxHeight,
-        dX = options.viewBoxWidth / N,
+        dX = options.viewBoxWidth / (N - 1),
         X = 0,
         lineStroke = this.getCurrentColor(),
         lineStrokeWidth = options.lineStrokeWidth,
         background = options.background,
-        maskId = options.mask;
+        maskId = options.mask,
+        chartG = document.createElementNS(this.svgns, "g");
 
-    let g = document.createElementNS(this.svgns, "g");
+    if (options.chartId) {
+        chartG.id = options.chartId;
+    }
 
-    g.id = options.chartGroupId;
+    let g = options.appendTo || document.createElementNS(this.svgns, "g");
 
-    if (background) {
+    // g.id = options.chartGroupId;
+
+    if (!options.appendTo && background) {
         g.appendChild(background);
     }
 
-    if (options.clipId) {
+    if (!options.appendTo && options.clipId) {
         g.setAttribute("clip-path", "url(#" + options.clipId + ")");
     }
 
-    if (maskId) {
+    if (!options.appendTo && maskId) {
         g.setAttribute("mask", "url(#" + maskId + ")");
     }
 
-    for (i = 1; i < N; i++) {
-        let line = this.createLine([X, vbHeight - Ys[i], X + dX, vbHeight - Ys[i + 1]], lineStroke);
-        line.style.strokeWidth = lineStrokeWidth;
-        line.setAttribute("vector-effect", "non-scaling-stroke");
+    let polyline = document.createElementNS(this.svgns, "polyline"),
+        linePoints = "";
 
-        g.appendChild(line);
+    polyline.setAttribute("vector-effect", "non-scaling-stroke");
+    polyline.setAttribute("fill", "none");
+    polyline.setAttribute("stroke", lineStroke);
+    polyline.setAttribute("stroke-width", lineStrokeWidth);
+
+    for (i = 0; i < N; i++) {
+        linePoints += X + "," + (vbHeight - Ys[i]) + " ";
 
         X += dX;
     }
 
-    svg.appendChild(g);
+    polyline.setAttribute("points", linePoints);
+    chartG.appendChild(polyline);
 
-    return svg;
+    // for (i = 1; i < N; i++) {
+    //     let line = this.createLine([X, vbHeight - Ys[i], X + dX, vbHeight - Ys[i + 1]], lineStroke);
+    //     line.style.strokeWidth = lineStrokeWidth;
+    //     line.setAttribute("vector-effect", "non-scaling-stroke");
+
+    //     chartG.appendChild(line);
+
+    //     X += dX;
+    // }
+
+    g.appendChild(chartG);
+
+    if (!options.appendTo) {
+        parentEl.appendChild(g);
+    }
+
+    return g;
 };
 
 Telecharm.prototype.createLine = function(coords, stroke) {
@@ -256,7 +321,7 @@ Telecharm.prototype.createLine = function(coords, stroke) {
 
 Telecharm.prototype.drawPreviewChart = function() {
     let svg = document.createElementNS(this.svgns, "svg"),
-        pv = this.preview;
+        pv = this.preview, chartG;
 
     svg.setAttribute("viewBox", [0, 0, pv.viewBox.width, pv.viewBox.height].join(" "));
 
@@ -289,14 +354,19 @@ Telecharm.prototype.drawPreviewChart = function() {
     background.style.fill = "#BBBBBB";
     background.style.fillOpacity = 1;
 
-    this.drawChart(svg, {
-        viewBoxHeight: pv.viewBox.height,
-        viewBoxWidth: pv.viewBox.width,
-        lineStrokeWidth: "1px",
-        mask: "previewBackground",
-        chartGroupId: "previewChart",
-        background: background.cloneNode(),
-        clipId: "backClip"
+    this.dots.dislayedCharts.forEach(name => {
+        this.current = name;
+        chartG = this.drawChart(svg, {
+            viewBoxHeight: pv.viewBox.height,
+            viewBoxWidth: pv.viewBox.width,
+            lineStrokeWidth: "2px",
+            mask: "previewBackground",
+            chartGroupId: "previewChart",
+            background: background.cloneNode(),
+            clipId: "backClip",
+            appendTo: chartG,
+            chartId: "previewBack_" + name
+        });
     });
 
     let frontBackgroundG = document.createElementNS(this.svgns, "g");
@@ -311,19 +381,25 @@ Telecharm.prototype.drawPreviewChart = function() {
     frontBackgroundG.appendChild(grayBack);
     frontBackgroundG.appendChild(whiteBack);
 
-    this.drawChart(svg, {
-        viewBoxHeight: pv.viewBox.height,
-        viewBoxWidth: pv.viewBox.width,
-        lineStrokeWidth: "1px",
-        mask: "sliderMask",
-        chartGroupId: "previewChart",
-        background: frontBackgroundG,
-        clipId: "frontClip"
+    chartG = null;
+    this.dots.dislayedCharts.forEach(name => {
+        this.current = name;
+        chartG = this.drawChart(svg, {
+            viewBoxHeight: pv.viewBox.height,
+            viewBoxWidth: pv.viewBox.width,
+            lineStrokeWidth: "2px",
+            mask: "sliderMask",
+            chartGroupId: "previewChart",
+            background: frontBackgroundG,
+            clipId: "frontClip",
+            appendTo: chartG,
+            chartId: "previewFront_" + name
+        });
     });
 
     this.drawPreviewSlider();
 
-    this.container.appendChild(svg);
+    this.containerSvg.appendChild(svg);
 };
 
 Telecharm.prototype.normalizedWidth = function(w) {
@@ -478,7 +554,7 @@ Telecharm.prototype.bindHandler = function() {
 
         this.lastMousePosX = e.pageX;
 
-        let pos = e.offsetX * this.preview.viewBox.width / this.container.offsetWidth,
+        let pos = e.offsetX * this.preview.viewBox.width / this.containerSvg.offsetWidth,
             rect = this.preview.rects.carrierMaskRect;
 
         if (pos <= rect.x.animVal.value) {
@@ -511,7 +587,7 @@ Telecharm.prototype.drawPreviewSlider = function() {
         endPos = vbWidth * pv.carrier.end,
         sidesOpacity = 0.4,
         maskId = "sliderMask",
-        width = this.container.offsetWidth,
+        width = this.containerSvg.offsetWidth,
         koef = vbWidth / width,
         mainChartSvg = this.mainChart.svg,
         sideHandleWidth = 10 * koef,
@@ -561,16 +637,7 @@ Telecharm.prototype.drawPreviewSlider = function() {
         handlerRect
     };
 
-    var mainChartG = document.getElementById("mainChart");
-
-    this.mainChart.mainChartG = mainChartG;
-
-    var { width: mainVBW } = mainChartSvg.viewBox.animVal;
-    // mainChartG.setAttribute("transform", "scale(" + vbWidth / (endPos - startPos) + " 1) translate(" + -1 * mainVBW * startPos / vbWidth + " 0)");
-
     handlerRect.onmousedown = this.bindHandler();
-    // rectLeftHandle.onmousedown = this.bindHandler(this.leftHandlerDrag);
-    // rectRightHandle.onmousedown = this.bindHandler(this.rightHandlerDrag);
 };
 
 Telecharm.prototype.getXs = function() {
@@ -593,12 +660,6 @@ Telecharm.prototype.rerenderYAxis = function(scY) {
         scaleY = scY ? scY : maxY/currVBHeight;
 
     this.axis.scaleY = scaleY;
-
-    // if (scY) {
-    //     gL.setAttribute("transform", "translate(0 " + maxY * (1 - scaleY) + ") scale(1 " + scaleY + ")");
-    // } else {
-    //     gL.setAttribute("transform", "scale(1 " + scaleY + ")");
-    // }
 
     for (let i = 0; i < 6 ; i++) {
         let line = this.createLine([0, currVBHeight - Y, this.mainChart.viewBox.width, currVBHeight - Y], "#BBBBBB");
@@ -690,7 +751,9 @@ Telecharm.prototype.smoothlyUpdateChart = function(opts) {
         currentTranslateX = prevTranslateX + (targetTranslateX - prevTranslateX) * progress,
         currentTranslateY = prevTranslateY + (targetTranslateY - prevTranslateY) * progress;
 
-    this.mainChart.mainChartG.setAttribute("transform", " scale(" + currentScaleX + " " + currentScaleY +") translate(" + currentTranslateX + " " + currentTranslateY + ")");
+    this.dots.dislayedCharts.forEach(name => {
+        this.mainChart.mainChartG[name].setAttribute("transform", " scale(" + currentScaleX + " " + currentScaleY +") translate(" + currentTranslateX + " " + currentTranslateY + ")");
+    });
 
 };
 
@@ -741,7 +804,7 @@ Telecharm.prototype.animateYAxis = function(opts) {
 
     animF({
         start: performance.now(),
-        duration: 300,
+        duration: 2000,
         startScale: 1,
         prevScale: 1,
         prevScale2: 1,
@@ -821,7 +884,7 @@ Telecharm.prototype.drawAxis = function() {
 
     let style = document.createElementNS(this.svgns, "style");
 
-    style.innerHTML = ".axis { font: normal 5px sans-serif; }";
+    style.innerHTML = ".axis { font: normal " + this.preview.fontSize + " sans-serif; }";
 
     svg.appendChild(style);
 
@@ -832,7 +895,107 @@ Telecharm.prototype.drawAxis = function() {
 
     svg.appendChild(this.axis.gX);
 
-    this.container.appendChild(svg);
+    this.containerSvg.appendChild(svg);
+};
+
+Telecharm.prototype.drawButtons = function() {
+    let buttonStyle = document.createElement("style");
+
+    buttonStyle.innerHTML = `
+        .button {
+            position: relative;
+            display: inline-block;
+            margin:10px;
+            padding:6px;
+            border-color:gray;
+            border-radius: 24px;
+            border-width: 1px;
+            border-style: solid;
+        }
+
+        .button-text {
+            display: inline-block;
+            position: relative;
+            left: 0;
+        }
+
+        .button-icon-selected {
+            left: 0;
+            width: 24px;
+            height: 24px;
+            margin: 1px 10px 0px;
+            border-radius: 15px;
+            display:none;
+            border-radius: 15px;
+            border-style: solid;
+            border-width: 2px;
+        }
+
+        .button-icon-unselected {
+            left: 0;
+            display: inline-block;
+            width: 24px;
+            height: 24px;
+            margin: 1px 10px 0px;
+            border-radius: 15px;
+            border-style: solid;
+            border-width: 2px;
+        }
+
+        .button.selected .button-icon-selected {
+            display: inline-block;
+        }
+
+        .button.selected .button-icon-unselected {
+            display: none;
+        }
+    `;
+
+    document.head.appendChild(buttonStyle);
+
+    Object.keys(this.dots.Ys).forEach(name => {
+        this.current = name;
+        let btn = document.createElement("div"),
+            color = this.getCurrentColor();
+
+        btn.innerHTML = `<div class="button-icon-selected" style="background-color:${color};border-color:${color};"></div><div class="button-icon-unselected" style="border-color:${color};"></div><div class="button-text">${name}</div>`;
+        btn.setAttribute("class", "button selected");
+        btn.onclick = this.bindButtonHandler(btn, name);
+        this.containerBtns.appendChild(btn);
+    });
+}
+
+Telecharm.prototype.bindButtonHandler = function(btn, name) {
+    return function(e) {
+        e.stopPropagation();
+        e.preventDefault();
+        btn.classList.toggle("selected");
+
+        var { maxY, currMaxY } = this.getMaxs(),
+            gT = this.axis.gYText,
+            gL = this.axis.gYLines,
+            scaleY = this.axis.scaleY,
+            pv = this.preview,
+            prevScaleX = 1 / (pv.carrier.end - pv.carrier.begin),
+            prevScaleY = maxY / currMaxY,
+            vbWidth = this.mainChart.viewBox.width,
+            prevTranslateX = -1 * vbWidth * pv.carrier.begin,
+            prevTranslateY = currMaxY - maxY;;
+
+        if (this.dots.dislayedCharts.has(name)) {
+            this.dots.dislayedCharts.delete(name);
+        } else {
+            this.dots.dislayedCharts.add(name);
+        }
+
+        this.animateYAxis({
+            prevMaxY: currMaxY,
+            prevScaleX,
+            prevScaleY,
+            prevTranslateX,
+            prevTranslateY
+        });
+    }.bind(this);
 };
 
 document.addEventListener("DOMContentLoaded", () => {
