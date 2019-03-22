@@ -8,6 +8,7 @@ function Telecharm(params) {
     this.containerBtns = null;
     this.rerenderRequested = false;
     this.lastMousePosX = null;
+    this.currentTheme = 'day';
 
     this.xAxisRule = {
         3: 3,
@@ -36,7 +37,8 @@ function Telecharm(params) {
             height: 0
         },
         svg: null,
-        mainChartG: {}
+        chartG: {},
+        chartsG: null
     };
 
     this.dots = {
@@ -45,6 +47,7 @@ function Telecharm(params) {
         colors: {},
         count: {},
         dislayedCharts: new Set(),
+        hiddenCharts: new Set(),
         maxY: -Infinity
     };
 
@@ -83,10 +86,21 @@ function Telecharm(params) {
         },
         svg: null,
         rects: {},
-        fontSize: "8px"
+        fontSize: "8px",
+        chartG: {},
+        chartsG: null,
+        chartBackG: {},
+        chartsBackG: null
     };
 
     this.buttons = {};
+
+    this.theme = {
+        day: {
+            axisColor: "#BBBBBBB"
+        },
+        night: {}
+    };
 
     this.init(params);
 }
@@ -150,6 +164,10 @@ Telecharm.prototype.init = function(params) {
     this.drawPreviewChart();
     this.drawButtons();
 };
+
+Telecharm.prototype.getCurrThemeParam = function(param) {
+    return this.theme[this.currentTheme][param];
+}
 
 Telecharm.prototype.setXs = function(Xs) {
     this.dots.Xs = Xs.slice(0);
@@ -223,17 +241,21 @@ Telecharm.prototype.drawMainChart = function() {
     svg.style.top = 0;
     svg.style.left = 0;
 
+    let chartsG = this.mainChart.chartsG = document.createElementNS(this.svgns, "g");
+
     this.dots.dislayedCharts.forEach(name => {
         let groupName = "mainChart_" + name;
         this.current = name;
 
-        this.mainChart.mainChartG[name] = this.drawChart(svg, {
+        this.mainChart.chartG[name] = this.drawChart(chartsG, {
             viewBoxHeight: mc.viewBox.height,
             viewBoxWidth: mc.viewBox.width,
             lineStrokeWidth: "3px",
             chartGroupId: groupName
         });
     });
+
+    svg.appendChild(chartsG);
 
     this.containerSvg.appendChild(svg);
 }
@@ -246,29 +268,9 @@ Telecharm.prototype.drawChart = function(parentEl, options) {
         X = 0,
         lineStroke = this.getCurrentColor(),
         lineStrokeWidth = options.lineStrokeWidth,
-        background = options.background,
-        maskId = options.mask,
         chartG = document.createElementNS(this.svgns, "g");
 
-    if (options.chartId) {
-        chartG.id = options.chartId;
-    }
-
-    let g = options.appendTo || document.createElementNS(this.svgns, "g");
-
-    // g.id = options.chartGroupId;
-
-    if (!options.appendTo && background) {
-        g.appendChild(background);
-    }
-
-    if (!options.appendTo && options.clipId) {
-        g.setAttribute("clip-path", "url(#" + options.clipId + ")");
-    }
-
-    if (!options.appendTo && maskId) {
-        g.setAttribute("mask", "url(#" + maskId + ")");
-    }
+    chartG.style.opacity = 1;
 
     let polyline = document.createElementNS(this.svgns, "polyline"),
         linePoints = "";
@@ -287,34 +289,12 @@ Telecharm.prototype.drawChart = function(parentEl, options) {
     polyline.setAttribute("points", linePoints);
     chartG.appendChild(polyline);
 
-    // for (i = 1; i < N; i++) {
-    //     let line = this.createLine([X, vbHeight - Ys[i], X + dX, vbHeight - Ys[i + 1]], lineStroke);
-    //     line.style.strokeWidth = lineStrokeWidth;
-    //     line.setAttribute("vector-effect", "non-scaling-stroke");
+    parentEl.appendChild(chartG);
 
-    //     chartG.appendChild(line);
-
-    //     X += dX;
-    // }
-
-    g.appendChild(chartG);
-
-    if (!options.appendTo) {
-        parentEl.appendChild(g);
-    }
-
-    return g;
+    return chartG;
 };
 
-Telecharm.prototype.createLine = function(coords, stroke) {
-    let line = document.createElementNS(this.svgns, "line");
-
-    line.setAttribute("x1", coords[0]);
-    line.setAttribute("y1", coords[1]);
-    line.setAttribute("x2", coords[2]);
-    line.setAttribute("y2", coords[3]);
-
-    line.style.stroke = stroke;
+Telecharm.prototype.createLine = function(x1, y1, x2, y2, stroke) {
 
     return line;
 };
@@ -354,9 +334,18 @@ Telecharm.prototype.drawPreviewChart = function() {
     background.style.fill = "#BBBBBB";
     background.style.fillOpacity = 1;
 
+    let g = document.createElementNS(this.svgns, "g");
+
+    g.setAttribute("clip-path", "url(#backClip)");
+    g.setAttribute("mask", "url(#previewBackground)");
+    g.appendChild(background);
+    // g.id = options.chartGroupId;
+
+    let chartsBackG = this.preview.chartsBackG = document.createElementNS(this.svgns, "g");
+
     this.dots.dislayedCharts.forEach(name => {
         this.current = name;
-        chartG = this.drawChart(svg, {
+        this.preview.chartBackG[name] = this.drawChart(chartsBackG, {
             viewBoxHeight: pv.viewBox.height,
             viewBoxWidth: pv.viewBox.width,
             lineStrokeWidth: "2px",
@@ -368,6 +357,8 @@ Telecharm.prototype.drawPreviewChart = function() {
             chartId: "previewBack_" + name
         });
     });
+
+    g.appendChild(chartsBackG);
 
     let frontBackgroundG = document.createElementNS(this.svgns, "g");
 
@@ -381,10 +372,20 @@ Telecharm.prototype.drawPreviewChart = function() {
     frontBackgroundG.appendChild(grayBack);
     frontBackgroundG.appendChild(whiteBack);
 
+    svg.appendChild(g);
+
+    g = document.createElementNS(this.svgns, "g");
+
+    g.setAttribute("clip-path", "url(#frontClip)");
+    g.setAttribute("mask", "url(#sliderMask)");
+    g.appendChild(frontBackgroundG);
+
+    let chartsG = this.preview.chartsG = document.createElementNS(this.svgns, "g");
+
     chartG = null;
     this.dots.dislayedCharts.forEach(name => {
         this.current = name;
-        chartG = this.drawChart(svg, {
+        this.preview.chartG[name] = this.drawChart(chartsG, {
             viewBoxHeight: pv.viewBox.height,
             viewBoxWidth: pv.viewBox.width,
             lineStrokeWidth: "2px",
@@ -396,6 +397,10 @@ Telecharm.prototype.drawPreviewChart = function() {
             chartId: "previewFront_" + name
         });
     });
+
+    g.appendChild(chartsG);
+
+    svg.appendChild(g);
 
     this.drawPreviewSlider();
 
@@ -550,7 +555,7 @@ Telecharm.prototype.bindHandler = function() {
             prevScaleY = maxY / currMaxY,
             vbWidth = this.mainChart.viewBox.width,
             prevTranslateX = -1 * vbWidth * pv.carrier.begin,
-            prevTranslateY = currMaxY - maxY;;
+            prevTranslateY = currMaxY - maxY;
 
         this.lastMousePosX = e.pageX;
 
@@ -662,7 +667,14 @@ Telecharm.prototype.rerenderYAxis = function(scY) {
     this.axis.scaleY = scaleY;
 
     for (let i = 0; i < 6 ; i++) {
-        let line = this.createLine([0, currVBHeight - Y, this.mainChart.viewBox.width, currVBHeight - Y], "#BBBBBB");
+        let line = document.createElementNS(this.svgns, "line");
+
+        line.setAttribute("x1", 0);
+        line.setAttribute("y1", currVBHeight - Y);
+        line.setAttribute("x2", this.mainChart.viewBox.width);
+        line.setAttribute("y2", currVBHeight - Y);
+
+        line.style.stroke = "#BBBBBB";
 
         line.style.strokeWidth = "0.5px";
         line.setAttribute("vector-effect", "non-scaling-stroke");
@@ -745,16 +757,33 @@ Telecharm.prototype.smoothlyUpdateChart = function(opts) {
         targetScaleY = (maxs.maxY / maxs.currMaxY),
         vbWidth = this.mainChart.viewBox.width,
         targetTranslateX = -1 * vbWidth * pv.carrier.begin,
-        targetTranslateY = (maxs.currMaxY - maxs.maxY)
+        targetTranslateY = maxs.currMaxY - maxs.maxY,
         currentScaleX = prevScaleX + (targetScaleX - prevScaleX) * progress,
         currentScaleY = prevScaleY + (targetScaleY - prevScaleY) * progress,
         currentTranslateX = prevTranslateX + (targetTranslateX - prevTranslateX) * progress,
-        currentTranslateY = prevTranslateY + (targetTranslateY - prevTranslateY) * progress;
+        // currentTranslateY = (prevTranslateY * targetScaleY + (targetTranslateY / targetScaleY - prevTranslateY * targetScaleY) * progress ) * targetScaleY / currentScaleY;
+        currentTranslateY = (prevTranslateY + (targetTranslateY - prevTranslateY)) * currentTranslateX * progress / targetTranslateX;
+
+    this.mainChart.chartsG.setAttribute("transform", " scale(" + currentScaleX + " " + currentScaleY +") translate(" + currentTranslateX + " " + currentTranslateY  + ")");
 
     this.dots.dislayedCharts.forEach(name => {
-        this.mainChart.mainChartG[name].setAttribute("transform", " scale(" + currentScaleX + " " + currentScaleY +") translate(" + currentTranslateX + " " + currentTranslateY + ")");
+        if (this.mainChart.chartG[name].style.opacity < 1) {
+            this.mainChart.chartG[name].style.opacity = progress;
+            this.preview.chartG[name].style.opacity = progress;
+            this.preview.chartBackG[name].style.opacity = progress;
+        }
     });
 
+    this.preview.chartsG.setAttribute("transform", " scale(1 " + currentScaleY +")");
+    this.preview.chartsBackG.setAttribute("transform", " scale(1 " + currentScaleY +")");
+
+    this.dots.hiddenCharts.forEach(name => {
+        if (this.mainChart.chartG[name].style.opacity > 0) {
+            this.mainChart.chartG[name].style.opacity = 1 - progress;
+            this.preview.chartG[name].style.opacity = 1 - progress;
+            this.preview.chartBackG[name].style.opacity = 1 - progress;
+        }
+    });
 };
 
 Telecharm.prototype.animateYAxis = function(opts) {
@@ -804,7 +833,7 @@ Telecharm.prototype.animateYAxis = function(opts) {
 
     animF({
         start: performance.now(),
-        duration: 2000,
+        duration: 1000,
         startScale: 1,
         prevScale: 1,
         prevScale2: 1,
@@ -980,12 +1009,14 @@ Telecharm.prototype.bindButtonHandler = function(btn, name) {
             prevScaleY = maxY / currMaxY,
             vbWidth = this.mainChart.viewBox.width,
             prevTranslateX = -1 * vbWidth * pv.carrier.begin,
-            prevTranslateY = currMaxY - maxY;;
+            prevTranslateY = currMaxY - maxY;
 
         if (this.dots.dislayedCharts.has(name)) {
             this.dots.dislayedCharts.delete(name);
+            this.dots.hiddenCharts.add(name);
         } else {
             this.dots.dislayedCharts.add(name);
+            this.dots.hiddenCharts.delete(name);
         }
 
         this.animateYAxis({
