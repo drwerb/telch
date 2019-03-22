@@ -972,6 +972,8 @@ Telecharm.prototype.drawButtons = function() {
             display: inline-block;
             position: relative;
             left: 0;
+            top: -8px;
+            margin-right: 4px;
         }
 
         .button-icon-selected {
