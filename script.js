@@ -761,29 +761,54 @@ Telecharm.prototype.smoothlyUpdateChart = function(opts) {
         currentScaleX = prevScaleX + (targetScaleX - prevScaleX) * progress,
         currentScaleY = prevScaleY + (targetScaleY - prevScaleY) * progress,
         currentTranslateX = prevTranslateX + (targetTranslateX - prevTranslateX) * progress,
-        // currentTranslateY = (prevTranslateY * targetScaleY + (targetTranslateY / targetScaleY - prevTranslateY * targetScaleY) * progress ) * targetScaleY / currentScaleY;
-        currentTranslateY = (prevTranslateY + (targetTranslateY - prevTranslateY)) * currentTranslateX * progress / targetTranslateX;
+        currentTranslateY = (prevTranslateY + (targetTranslateY - prevTranslateY) * progress) * ( targetScaleY > prevScaleY ? targetScaleY : prevScaleY) / currentScaleY;
 
     this.mainChart.chartsG.setAttribute("transform", " scale(" + currentScaleX + " " + currentScaleY +") translate(" + currentTranslateX + " " + currentTranslateY  + ")");
+};
+
+Telecharm.prototype.smoothlyUpdatePreview = function(opts) {
+    let {
+            progress,
+            maxs,
+            prevScaleX,
+            prevScaleY,
+            prevTranslateX,
+            prevTranslateY
+        } = opts,
+        previewChanged = false,
+        pv = this.preview,
+        targetScaleX = 1 / (pv.carrier.end - pv.carrier.begin),
+        targetScaleY = (maxs.maxY / maxs.currMaxY),
+        vbWidth = this.mainChart.viewBox.width,
+        targetTranslateX = -1 * vbWidth * pv.carrier.begin,
+        targetTranslateY = maxs.currMaxY - maxs.maxY,
+        currentScaleX = prevScaleX + (targetScaleX - prevScaleX) * progress,
+        currentScaleY = prevScaleY + (targetScaleY - prevScaleY) * progress,
+        currentTranslateX = prevTranslateX + (targetTranslateX - prevTranslateX) * progress,
+        currentTranslateY = (prevTranslateY + (targetTranslateY - prevTranslateY) * progress) * ( targetScaleY > prevScaleY ? targetScaleY : prevScaleY) / currentScaleY;
 
     this.dots.dislayedCharts.forEach(name => {
         if (this.mainChart.chartG[name].style.opacity < 1) {
             this.mainChart.chartG[name].style.opacity = progress;
             this.preview.chartG[name].style.opacity = progress;
             this.preview.chartBackG[name].style.opacity = progress;
+            previewChanged = true;
         }
     });
-
-    this.preview.chartsG.setAttribute("transform", " scale(1 " + currentScaleY +")");
-    this.preview.chartsBackG.setAttribute("transform", " scale(1 " + currentScaleY +")");
 
     this.dots.hiddenCharts.forEach(name => {
         if (this.mainChart.chartG[name].style.opacity > 0) {
             this.mainChart.chartG[name].style.opacity = 1 - progress;
             this.preview.chartG[name].style.opacity = 1 - progress;
             this.preview.chartBackG[name].style.opacity = 1 - progress;
+            previewChanged = true;
         }
     });
+
+    if (previewChanged) {
+        this.preview.chartsG.setAttribute("transform", " scale(1 " + currentScaleY +") translate(0 " + currentTranslateY  + ")");
+        this.preview.chartsBackG.setAttribute("transform", " scale(1 " + currentScaleY +") translate(0 " + currentTranslateY  + ")");
+    }
 };
 
 Telecharm.prototype.animateYAxis = function(opts) {
@@ -821,6 +846,7 @@ Telecharm.prototype.animateYAxis = function(opts) {
             opts.progress = progress > 1 ? 1 : progress;
             opts = this.fadeOutYAxis(opts);
             this.smoothlyUpdateChart(opts);
+            this.smoothlyUpdatePreview(opts);
 
             if (progress < 1) {
                 animF(opts);
@@ -833,7 +859,7 @@ Telecharm.prototype.animateYAxis = function(opts) {
 
     animF({
         start: performance.now(),
-        duration: 1000,
+        duration: 300,
         startScale: 1,
         prevScale: 1,
         prevScale2: 1,
