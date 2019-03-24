@@ -6,9 +6,25 @@ function Telecharm(params) {
     this.container = null;
     this.containerSvg = null;
     this.containerBtns = null;
-    this.rerenderRequested = false;
+    this.isViewUpdateRequested = false;
     this.lastMousePosX = null;
     this.currentTheme = 'day';
+    this.animDuration = 300;
+    this.dragProcessing = false;
+    this.lastState = {};
+    this.currentState = {};
+    this.vertAnimState = {};
+    this.horizAnimState = {};
+    this.animationState = {
+        horizScaleProgress: 1,
+        vertScaleProgress: 1,
+        vertScaleStartTime: 1,
+        progress: 0,
+        carrierBeginFrom: 0,
+        carrierEndFrom: 1,
+        carrierBeginTo: 0,
+        carrierEndTo: 1
+    };
 
     this.xAxisRule = {
         3: 3,
@@ -46,9 +62,10 @@ function Telecharm(params) {
         Ys: {},
         colors: {},
         count: {},
-        dislayedCharts: new Set(),
+        displayedCharts: new Set(),
         hiddenCharts: new Set(),
-        maxY: -Infinity
+        maxY: -Infinity,
+        maxsY: {}
     };
 
     this.axis = {
@@ -86,7 +103,7 @@ function Telecharm(params) {
         },
         svg: null,
         rects: {},
-        fontSize: "8px",
+        fontSize: "11px",
         chartG: {},
         chartsG: null,
         chartBackG: {},
@@ -159,10 +176,15 @@ Telecharm.prototype.init = function(params) {
     pv.viewBox.height = this.dots.maxY;
     pv.viewBox.width = pv.viewBox.height * cW / (cH / 11);
 
+    this.currentStateSnapshot(this.currentState);
+
     this.drawAxis();
     this.drawMainChart();
     this.drawPreviewChart();
     this.drawButtons();
+
+    this.currentStateSnapshot(this.lastState);
+    this.requestViewUpdate();
 };
 
 Telecharm.prototype.getCurrThemeParam = function(param) {
@@ -177,10 +199,10 @@ Telecharm.prototype.setYs = function(name, Ys, color) {
     this.dots.count[name] = Ys.length;
     this.dots.colors[name] = color;
     this.dots.Ys[name] = Ys.slice(0);
-    this.dots.dislayedCharts.add(name);
+    this.dots.displayedCharts.add(name);
     this.current = name;
 
-    this.setMaxY(Ys);
+    this.setMaxY(Ys, name);
 };
 
 Telecharm.prototype.getCurrentYs = function() {
@@ -191,8 +213,9 @@ Telecharm.prototype.getCurrentColor = function() {
     return this.dots.colors[this.current];
 };
 
-Telecharm.prototype.setMaxY = function(Ys) {
-    this.dots.maxY = Math.max(this.dots.maxY, ...Ys);
+Telecharm.prototype.setMaxY = function(Ys, name) {
+    this.dots.maxsY[name] = Math.max(...Ys);
+    this.dots.maxY = Math.max(this.dots.maxY, this.dots.maxsY[name]);
 };
 
 Telecharm.prototype.setChartSvg = function(svg) {
@@ -206,7 +229,7 @@ Telecharm.prototype.getMaxs = function() {
         dotsEnd = Math.round(N * this.preview.carrier.end),
         currMaxY = -Infinity;
 
-    this.dots.dislayedCharts.forEach(name => {
+    this.dots.displayedCharts.forEach(name => {
         currMaxY = Math.max(currMaxY, ...this.dots.Ys[name].slice(dotsStart, dotsEnd));
     });
 
@@ -216,13 +239,429 @@ Telecharm.prototype.getMaxs = function() {
     };
 };
 
-Telecharm.prototype.requestRerender = function() {
-    if (!this.rerenderRequested) {
-        requestAnimationFrame(function() {
-            this.rerenderSlider();
-            this.rerenderRequested = false;
-        }.bind(this));
-        this.rerenderRequested = true;
+Telecharm.prototype.getDisplayedMaxY = function() {
+    let max = -Infinity;
+
+    this.dots.displayedCharts.forEach(name => { max = Math.max(max, this.dots.maxsY[name])});
+
+    return max;
+};
+
+Telecharm.prototype.requestViewUpdate = function() {
+    if (!this.isViewUpdateRequested) {
+        this.animate();
+        this.isViewUpdateRequested = true;
+    }
+};
+
+Telecharm.prototype.animate = function() {
+    requestAnimationFrame(function(timestamp) {
+        let as = this.animationState,
+            cs = this.currentState,
+            ls = this.lastState,
+            vas = this.vertAnimState,
+            has = this.horizAnimState,
+            pv = this.preview;
+
+        this.currentStateSnapshot(cs);
+
+        if (as.vertScaleProgress == 1) {
+            as.vertScaleProgress = 0;
+            this.copyStateSnapshot(ls, vas);
+            vas.time = timestamp;
+            this.createRenewedYAxis();
+        }
+
+        if (as.vertScaleProgress < 1) {
+            let progress = (timestamp - vas.time) / 300;
+            as.vertScaleProgress = progress < 0 ? 0 : progress > 1 ? 1 : progress;
+        }
+
+        if (!this.dragProcessing && (as.afterLeftDragUpdate || as.afterRightDragUpdate)) {
+            this.createRenewedXAxis();
+            this.copyStateSnapshot(cs, has);
+            as.horizScaleProgress = 0;
+        }
+
+        this.updateSlider();
+        this.updateXAxis();
+
+        pv.carrier.begin = pv.carrier.beginToRender;
+        pv.carrier.end = pv.carrier.endToRender;
+
+        as.progress = 1;
+
+        if (as.vertScaleProgress <= 1 && as.oldGYLines) {
+            this.updateYAxis();
+            if (as.vertScaleProgress == 1) {
+                as.oldGYLines.remove();
+                as.oldGYText.remove();
+                as.oldGYLines = null;
+                as.oldGYText = null;
+            }
+        }
+
+        this.smoothlyUpdateChart();
+        this.smoothlyUpdatePreview();
+
+        if (as.progress == 1 && this.dragProcessing) {
+            this.currentStateSnapshot(ls);
+        }
+
+        if (as.horizScaleProgress < 1) {
+            let progress = (timestamp - has.time) / 300;
+            as.horizScaleProgress = progress < 0 ? 0 : progress > 1 ? 1 : progress;
+        }
+
+        if (as.horizScaleProgress == 1 && as.oldGXText) {
+            as.oldGXText.remove();
+            as.oldGXText = null;
+        }
+
+        if (!this.dragProcessing && as.progress == 1 && as.vertScaleProgress == 1 && as.horizScaleProgress == 1) {
+            this.isViewUpdateRequested = false;
+        } else {
+            this.animate();
+        }
+    }.bind(this));
+};
+
+Telecharm.prototype.createRenewedXAxis = function() {
+    let Xs = this.dots.Xs,
+        lenXs = Xs.length,
+        btr = this.preview.carrier.beginToRender,
+        etr = this.preview.carrier.endToRender,
+        dotsStart = Math.floor(lenXs * this.preview.carrier.beginToRender),
+        dotsEnd = Math.round(lenXs * this.preview.carrier.endToRender),
+        len = dotsEnd - dotsStart,
+        X = 0, segments, startDotX,
+        vbWidth = this.containerSvg.offsetWidth,
+        gX = this.axis.gX,
+        segDotsLen = +gX.dataset.seglen,
+        dX = +gX.dataset.dx,
+        tr = +gX.dataset.trx;
+        newGX = gX.cloneNode();
+
+    var lenT = gX.children.length,
+        as = this.animationState;
+
+    as.oldGXText = gX;
+
+    this.axis.gX = newGX;
+
+    if (as.afterLeftDragUpdate) {
+        let lc = gX.lastChild;
+        while (+lc.dataset.x + tr > vbWidth) {
+            lc.remove();
+            lc = gX.lastChild;
+        }
+        newGX.appendChild(lc.cloneNode(true));
+        while ((+newGX.firstChild.dataset.idx - segDotsLen) / lenXs >= btr) {
+            let nextIdx = +newGX.firstChild.dataset.idx - segDotsLen,
+                X = +newGX.firstChild.dataset.x - dX;
+
+            if (nextIdx < 0) {
+                break;
+            }
+
+            let text = this.createXAxisText(Xs[nextIdx], X);
+            text.setAttribute("data-x", X);
+            text.setAttribute("data-idx", nextIdx);
+            newGX.insertBefore(text, newGX.firstChild);
+        }
+        as.afterLeftDragUpdate = false;
+    }
+
+    if (as.afterRightDragUpdate) {
+        let fc = gX.firstChild;
+        while (+fc.dataset.x + tr < 0) {
+            fc.remove();
+            fc = gX.firstChild;
+        }
+        newGX.appendChild(fc.cloneNode(true));
+        while ((+newGX.lastChild.dataset.idx + segDotsLen) / lenXs <= etr) {
+            let nextIdx = +newGX.lastChild.dataset.idx + segDotsLen,
+                X = +newGX.lastChild.dataset.x + dX;
+
+            if (nextIdx < lenXs) {
+                break;
+            }
+
+            let text = this.createXAxisText(Xs[nextIdx], X);
+            text.setAttribute("data-x", X);
+            text.setAttribute("data-idx", nextIdx);
+            newGX.appendChild(text);
+        }
+        as.afterRightDragUpdate = false;
+    }
+
+    this.axis.svgTextX.appendChild(newGX);
+}
+
+Telecharm.prototype.updateXAxis = function() {
+    let Xs = this.dots.Xs,
+        lenXs = Xs.length,
+        b = this.preview.carrier.begin,
+        e = this.preview.carrier.end,
+        btr = this.preview.carrier.beginToRender,
+        etr = this.preview.carrier.endToRender,
+        dotsStart = Math.floor(lenXs * btr),
+        dotsEnd = Math.round(lenXs * etr),
+        scaleX = this.currentState.scaleX,
+        translateX = this.currentState.translateX,
+        len = dotsEnd - dotsStart,
+        vbWidth = this.containerSvg.offsetWidth,
+        gX = this.axis.gX,
+        segDotsLen = +gX.dataset.seglen,
+        dX = +gX.dataset.dx,
+        tr = +gX.dataset.trx,
+        sc = +gX.dataset.scx,
+        X = 0, segments, startDotX,
+        pv = this.preview,
+        targetScaleX = 1 / (etr - btr),
+        targetTranslateX = -1 * this.mainChart.viewBox.width * pv.carrier.beginToRender,
+        idxLen = this.mainChart.viewBox.width / lenXs;
+
+    let progress = this.animationState.progress,
+        cs = this.currentState,
+        ls = this.lastState,
+        vas = this.vertAnimState,
+        prevScaleX = ls.scaleX,
+        prevTranslateX = ls.translateX,
+        textXScale = vbWidth / this.mainChart.viewBox.width,
+        currentScaleX = prevScaleX + (scaleX - prevScaleX) * progress,
+        currentTranslateX = tr + ((targetTranslateX - translateX) * currentScaleX) * textXScale,
+        // currentTranslateX = tr - (btr - pv.carrier.begin) * vbWidth,
+        leftEdge = (vbWidth * btr + targetTranslateX) * sc,
+        rightEdge = (vbWidth * etr + targetTranslateX) * sc,
+        leftNewTextX = (+gX.firstChild.dataset.x - dX),
+        rightNewTextX = (+gX.lastChild.dataset.x + dX),
+        as = this.animationState,
+        progressH = as.horizScaleProgress;
+        // currentTranslateY = (prevTranslateY * prevScaleY + (targetTranslateY * targetScaleY - prevTranslateY * prevScaleY) * progressV) / (prevScaleY + (targetScaleY - prevScaleY) * progressV);
+
+    if (as.oldGXText) {
+        as.oldGXText.style.opacity = 1 - progressH;
+        gX.style.opacity = progressH;
+    }
+
+
+    if (btr != b && etr != e) {
+        if ((+gX.firstChild.dataset.idx - segDotsLen) / lenXs >= btr) {
+            let movedText = gX.lastChild,
+                nextIdx = +gX.firstChild.dataset.idx - segDotsLen;
+
+            if (nextIdx > 0) {
+                movedText.innerHTML = this.getDateText(Xs[nextIdx]);
+                movedText.setAttribute("x", leftNewTextX);
+                movedText.dataset.x = +gX.firstChild.dataset.x - dX;
+                movedText.dataset.idx = nextIdx;
+                gX.insertBefore(movedText, gX.firstChild);
+            }
+        } else if ((+gX.lastChild.dataset.idx + segDotsLen) / lenXs <= etr) {
+            let movedText = gX.firstChild,
+                nextIdx = +gX.lastChild.dataset.idx + segDotsLen;
+
+            if (nextIdx < lenXs) {
+                movedText.innerHTML = this.getDateText(Xs[nextIdx]);
+                movedText.setAttribute("x", rightNewTextX);
+                movedText.dataset.x = +gX.lastChild.dataset.x + dX;
+                movedText.dataset.idx = nextIdx;
+                gX.appendChild(movedText);
+            }
+        }
+
+        this.axis.gX.setAttribute("transform", "translate(" + currentTranslateX + " 0)");
+        gX.dataset.trx = currentTranslateX;
+    }
+    else if (btr != b && etr == e || btr == b && etr != e){
+        let chLen = gX.children.length;
+
+        for (let i = 0; i < chLen; i++) {
+            let ch = gX.children[i],
+                idx = +ch.dataset.idx,
+                chartX = (idx - 1) * idxLen,
+                ddX = (chartX + targetTranslateX) * targetScaleX - (chartX + translateX) * scaleX,
+                newX = ch.x.animVal[0].value + ddX * textXScale;
+
+            ch.setAttribute("x", newX);
+            ch.dataset.x = newX;
+        }
+
+        if (len < 15) {
+            segments = this.xAxisRule[len];
+        } else {
+            segments = len % 6 < len % 5 ? 6 : 5;
+        }
+
+        segDotsLen = Math.floor(len / segments);
+
+        dX = segDotsLen * vbWidth / len;
+
+        gX.setAttribute("data-dx", dX);
+        gX.setAttribute("data-seglen", segDotsLen);
+
+        if ((+gX.firstChild.dataset.idx - segDotsLen) / lenXs >= btr) {
+            let nextIdx = +gX.firstChild.dataset.idx - segDotsLen,
+                X = +gX.firstChild.dataset.x - dX;
+
+            if (nextIdx > 0) {
+                let text = this.createXAxisText(Xs[nextIdx], X);
+                text.setAttribute("data-x", X);
+                text.setAttribute("data-idx", nextIdx);
+                gX.insertBefore(text, gX.firstChild);
+                this.animationState.afterLeftDragUpdate = true;
+            }
+
+        } else if ((+gX.lastChild.dataset.idx + segDotsLen) / lenXs <= etr) {
+            let nextIdx = +gX.lastChild.dataset.idx + segDotsLen,
+                X = +gX.lastChild.dataset.x + dX;
+
+            if (nextIdx < lenXs) {
+                let text = this.createXAxisText(Xs[nextIdx], X);
+                text.setAttribute("data-x", X);
+                text.setAttribute("data-idx", nextIdx);
+                gX.appendChild(text);
+                this.animationState.afterRightDragUpdate = true;
+            }
+        }
+    }
+};
+
+Telecharm.prototype.createRenewedYAxis = function() {
+    var gL = this.axis.gYLines,
+        gT = this.axis.gYText,
+        Y = 0,
+        dY = 2 * this.currentState.localMaxY / 11,
+        len = gT.children.length,
+        as = this.animationState;
+
+    as.oldGYLines = gL;
+    as.oldGYText = gT;
+    as.prevScale = 1;
+    as.prevScale2 = 1;
+
+    this.axis.gYLines = gL.cloneNode(true);
+    this.axis.gYText = gT.cloneNode(true);
+
+    for (let i = 0; i < len ; i++) {
+        this.axis.gYText.children[i].innerHTML = Math.round(Y);
+
+        Y += dY;
+    }
+
+    this.axis.svg.appendChild(this.axis.gYLines);
+    this.axis.svgTextY.appendChild(this.axis.gYText);
+}
+
+Telecharm.prototype.updateYAxis = function() {
+    let cs = this.currentState,
+        ls = this.lastState,
+        vas = this.vertAnimState,
+        as = this.animationState,
+        progressV = as.vertScaleProgress,
+        maxY = cs.maxY,
+        currMaxY = cs.localMaxY,
+        Y = 0,
+        dY = 2 * currMaxY / 11,
+        gTOld = as.oldGYText,
+        gLOld = as.oldGYLines,
+        lenOld = gTOld.children.length,
+        gT = this.axis.gYText,
+        gL = this.axis.gYLines,
+        len = gT.children.length,
+        targetScale = vas.localMaxY / currMaxY,
+        scaleY = 1 + (targetScale - 1) * progressV,
+        scaleY2 = scaleY / targetScale;
+
+    gLOld.setAttribute("transform", "translate(0 " + maxY * (1 - scaleY) + ") scale(1 " + scaleY + ")");
+    gLOld.style.opacity = 1 - progressV;
+
+    for (let i = 0; i < len; i++) {
+        let c = gTOld.children[i];
+        c.setAttribute("y", c.y.animVal[0].value * scaleY / as.prevScale);
+    }
+
+    gTOld.setAttribute("transform", "translate(0 " + maxY * (1 - scaleY) + ")");
+    gTOld.style.opacity = 1 - progressV;
+
+    gL.setAttribute("transform", "translate(0 " + maxY * (1 - scaleY2) + ") scale(1 " + scaleY2 + ")");
+    gL.style.opacity = progressV;
+
+    for (let i = 0; i < len; i++) {
+        let c = gT.children[i];
+        c.setAttribute("y", c.y.animVal[0].value * scaleY2 / as.prevScale2);
+    }
+
+    gT.setAttribute("transform", "translate(0 " + maxY * (1 - scaleY2) + ")");
+    gT.style.opacity = progressV;
+
+    as.prevScale = scaleY;
+    as.prevScale2 = scaleY2;
+};
+
+Telecharm.prototype.smoothlyUpdateChart = function() {
+    let progress = this.animationState.progress,
+        progressV = this.animationState.vertScaleProgress,
+        cs = this.currentState,
+        ls = this.lastState,
+        vas = this.vertAnimState,
+        maxY = cs.maxY,
+        currMaxY = cs.localMaxY,
+        prevScaleX = ls.scaleX,
+        prevScaleY = vas.scaleY,
+        prevTranslateX = ls.translateX,
+        prevTranslateY = vas.translateY,
+        pv = this.preview,
+        targetScaleX = 1 / (pv.carrier.end - pv.carrier.begin),
+        targetScaleY = maxY / currMaxY,
+        vbWidth = this.mainChart.viewBox.width,
+        targetTranslateX = -1 * vbWidth * pv.carrier.begin,
+        targetTranslateY = currMaxY - maxY,
+        currentScaleX = prevScaleX + (targetScaleX - prevScaleX) * progress,
+        currentScaleY = prevScaleY + (targetScaleY - prevScaleY) * progressV,
+        currentTranslateX = prevTranslateX + (targetTranslateX - prevTranslateX) * progress,
+        currentTranslateY = (prevTranslateY * prevScaleY + (targetTranslateY * targetScaleY - prevTranslateY * prevScaleY) * progressV) / (prevScaleY + (targetScaleY - prevScaleY) * progressV);
+
+    this.mainChart.chartsG.setAttribute("transform", " scale(" + currentScaleX + " " + currentScaleY +") translate(" + currentTranslateX + " " + currentTranslateY  + ")");
+};
+
+Telecharm.prototype.smoothlyUpdatePreview = function() {
+    let progress = this.animationState.vertScaleProgress,
+        cs = this.currentState,
+        ls = this.lastState,
+        vas = this.vertAnimState,
+        maxY = cs.maxY,
+        currMaxY = cs.displayedMaxY,
+        prevScaleY = ls.previewScaleY,
+        prevTranslateY = ls.displayedMaxY - maxY,
+        previewChanged = false,
+        targetScaleY = maxY / currMaxY,
+        targetTranslateY = currMaxY - maxY,
+        currentScaleY = prevScaleY + (targetScaleY - prevScaleY) * progress,
+        currentTranslateY = (prevTranslateY * prevScaleY + (targetTranslateY * targetScaleY - prevTranslateY * prevScaleY) * progress) / (prevScaleY + (targetScaleY - prevScaleY) * progress);
+
+    this.dots.displayedCharts.forEach(name => {
+        if (this.mainChart.chartG[name].style.opacity < 1) {
+            this.mainChart.chartG[name].style.opacity = progress;
+            this.preview.chartG[name].style.opacity = progress;
+            this.preview.chartBackG[name].style.opacity = progress;
+            previewChanged = true;
+        }
+    });
+
+    this.dots.hiddenCharts.forEach(name => {
+        if (this.mainChart.chartG[name].style.opacity > 0) {
+            this.mainChart.chartG[name].style.opacity = 1 - progress;
+            this.preview.chartG[name].style.opacity = 1 - progress;
+            this.preview.chartBackG[name].style.opacity = 1 - progress;
+            previewChanged = true;
+        }
+    });
+
+    if (previewChanged) {
+        this.preview.chartsG.setAttribute("transform", " scale(1 " + currentScaleY +") translate(0 " + currentTranslateY  + ")");
+        this.preview.chartsBackG.setAttribute("transform", " scale(1 " + currentScaleY +") translate(0 " + currentTranslateY  + ")");
     }
 };
 
@@ -243,7 +682,7 @@ Telecharm.prototype.drawMainChart = function() {
 
     let chartsG = this.mainChart.chartsG = document.createElementNS(this.svgns, "g");
 
-    this.dots.dislayedCharts.forEach(name => {
+    this.dots.displayedCharts.forEach(name => {
         let groupName = "mainChart_" + name;
         this.current = name;
 
@@ -294,11 +733,6 @@ Telecharm.prototype.drawChart = function(parentEl, options) {
     return chartG;
 };
 
-Telecharm.prototype.createLine = function(x1, y1, x2, y2, stroke) {
-
-    return line;
-};
-
 Telecharm.prototype.drawPreviewChart = function() {
     let svg = document.createElementNS(this.svgns, "svg"),
         pv = this.preview, chartG;
@@ -339,11 +773,10 @@ Telecharm.prototype.drawPreviewChart = function() {
     g.setAttribute("clip-path", "url(#backClip)");
     g.setAttribute("mask", "url(#previewBackground)");
     g.appendChild(background);
-    // g.id = options.chartGroupId;
 
     let chartsBackG = this.preview.chartsBackG = document.createElementNS(this.svgns, "g");
 
-    this.dots.dislayedCharts.forEach(name => {
+    this.dots.displayedCharts.forEach(name => {
         this.current = name;
         this.preview.chartBackG[name] = this.drawChart(chartsBackG, {
             viewBoxHeight: pv.viewBox.height,
@@ -383,7 +816,7 @@ Telecharm.prototype.drawPreviewChart = function() {
     let chartsG = this.preview.chartsG = document.createElementNS(this.svgns, "g");
 
     chartG = null;
-    this.dots.dislayedCharts.forEach(name => {
+    this.dots.displayedCharts.forEach(name => {
         this.current = name;
         this.preview.chartG[name] = this.drawChart(chartsG, {
             viewBoxHeight: pv.viewBox.height,
@@ -407,11 +840,7 @@ Telecharm.prototype.drawPreviewChart = function() {
     this.containerSvg.appendChild(svg);
 };
 
-Telecharm.prototype.normalizedWidth = function(w) {
-    return w < 0 ? 0 : w;
-};
-
-Telecharm.prototype.rerenderSlider = function() {
+Telecharm.prototype.updateSlider = function() {
     let pv = this.preview,
         diffBegin = pv.carrier.beginToRender - pv.carrier.begin,
         diffEnd = pv.carrier.endToRender - pv.carrier.end,
@@ -442,18 +871,6 @@ Telecharm.prototype.rerenderSlider = function() {
         carrierMaskRect.setAttribute("width", carrierMaskRect.width.animVal.value + dXEnd);
         handlerRect.setAttribute("width", handlerRect.width.animVal.value + dXEnd);
     }
-
-    // if (diffBegin != 0 || diffEnd != 0) {
-    //     let maxs = this.getMaxs();
-    //     this.mainChart.mainChartG.setAttribute("transform", " scale(" + 1 / (pv.carrier.end - pv.carrier.begin) + " " + (maxs.maxY / maxs.currMaxY) +") translate(" + -1 * vbWidth * pv.carrier.begin + " " + (maxs.currMaxY - maxs.maxY) + ")");
-    // }
-
-    this.rerenderXAxis();
-    // this.rerenderYAxis();
-    // this.animateYAxis();
-
-    pv.carrier.begin = pv.carrier.beginToRender;
-    pv.carrier.end = pv.carrier.endToRender;
 };
 
 Telecharm.prototype.mouseMoveHandler = function(e) {
@@ -485,10 +902,11 @@ Telecharm.prototype.mouseMoveHandler = function(e) {
         pv.carrier.endToRender += pv.carrier.beginToRender - pv.carrier.begin;
     }
 
-    this.requestRerender();
+    this.requestViewUpdate();
 };
 
 Telecharm.prototype.leftHandlerDrag = function(e) {
+    this.dragLeft = true;
     let dXMouse = e.pageX - this.lastMousePosX;
 
     e.preventDefault();
@@ -513,10 +931,11 @@ Telecharm.prototype.leftHandlerDrag = function(e) {
         pv.carrier.beginToRender = tmpBToRender < 0 ? 0 : tmpBToRender;
     }
 
-    this.requestRerender();
+    this.requestViewUpdate();
 };
 
 Telecharm.prototype.rightHandlerDrag = function(e) {
+    this.dragRight = true;
     let dXMouse = e.pageX - this.lastMousePosX;
 
     e.preventDefault();
@@ -541,21 +960,13 @@ Telecharm.prototype.rightHandlerDrag = function(e) {
         pv.carrier.endToRender = tmpEToRender < pv.carrier.begin ? pv.carrier.begin : tmpEToRender;
     }
 
-    this.requestRerender();
+    this.requestViewUpdate();
 };
 
 Telecharm.prototype.bindHandler = function() {
     return function(e) {
-        var { maxY, currMaxY } = this.getMaxs(),
-            gT = this.axis.gYText,
-            gL = this.axis.gYLines,
-            scaleY = this.axis.scaleY,
-            pv = this.preview,
-            prevScaleX = 1 / (pv.carrier.end - pv.carrier.begin),
-            prevScaleY = maxY / currMaxY,
-            vbWidth = this.mainChart.viewBox.width,
-            prevTranslateX = -1 * vbWidth * pv.carrier.begin,
-            prevTranslateY = currMaxY - maxY;
+        this.dragProcessing = true;
+        this.currentStateSnapshot(this.lastState);
 
         this.lastMousePosX = e.pageX;
 
@@ -571,17 +982,54 @@ Telecharm.prototype.bindHandler = function() {
         }
 
         document.onmouseup = function() {
-            this.animateYAxis({
-                prevMaxY: currMaxY,
-                prevScaleX,
-                prevScaleY,
-                prevTranslateX,
-                prevTranslateY
-            });
+            this.dragProcessing = false;
+            this.dragLeft = false;
+            this.dragRight = false;
             document.onmousemove = null;
             document.onmouseup = null;
         }.bind(this);
     }.bind(this)
+};
+
+Telecharm.prototype.currentStateSnapshot = function(state) {
+    var { maxY, currMaxY } = this.getMaxs(),
+        pv = this.preview,
+        prevScaleX = 1 / (pv.carrier.end - pv.carrier.begin),
+        prevScaleY = maxY / currMaxY,
+        displayedMaxY = this.getDisplayedMaxY(),
+        previewScaleY = maxY / displayedMaxY,
+        prevTranslateX = -1 * this.mainChart.viewBox.width * pv.carrier.begin,
+        prevTranslateY = currMaxY - maxY;
+
+    state.time = performance.now();
+    state.maxY = maxY;
+    state.localMaxY = currMaxY;
+    state.scaleX = prevScaleX;
+    state.scaleY = prevScaleY;
+    state.translateX = prevTranslateX;
+    state.translateY = prevTranslateY;
+    state.carrierBegin = pv.carrier.begin;
+    state.carrierEnd = pv.carrier.end;
+    state.displayedMaxY = displayedMaxY;
+    state.previewScaleY = previewScaleY;
+    state.dragLeft = this.dragLeft;
+    state.dragRight = this.dragRight;
+};
+
+Telecharm.prototype.copyStateSnapshot = function(stateFrom, stateTo) {
+    stateTo.time = stateFrom.time;
+    stateTo.maxY = stateFrom.maxY;
+    stateTo.localMaxY = stateFrom.localMaxY;
+    stateTo.scaleX = stateFrom.scaleX;
+    stateTo.scaleY = stateFrom.scaleY;
+    stateTo.translateX = stateFrom.translateX;
+    stateTo.translateY = stateFrom.translateY;
+    stateTo.carrierBegin = stateFrom.carrierBegin;
+    stateTo.carrierEnd = stateFrom.carrierEnd;
+    stateTo.displayedMaxY = stateFrom.displayedMaxY;
+    stateTo.previewScaleY = stateFrom.previewScaleY;
+    stateTo.dragLeft = stateFrom.dragLeft;
+    stateTo.dragRight = stateFrom.dragRight;
 };
 
 Telecharm.prototype.drawPreviewSlider = function() {
@@ -645,24 +1093,24 @@ Telecharm.prototype.drawPreviewSlider = function() {
     handlerRect.onmousedown = this.bindHandler();
 };
 
-Telecharm.prototype.getXs = function() {
-    let Xs = this.dots.Xs
-        len = Xs.length,
-        dotsStart = Math.floor(len * this.preview.carrier.beginToRender),
-        dotsEnd = Math.round(len * this.preview.carrier.endToRender);
+Telecharm.prototype.drawYAxis = function(scY) {
+    let svgTextY = this.axis.svgTextY = document.createElementNS(this.svgns, "svg");
 
-    return {
-        viewXs: Xs.slice(dotsStart, dotsEnd)
-    };
-};
+    svgTextY.style.width = '5%';
+    svgTextY.style.height = this.mainChart.element.height;
+    svgTextY.style.position = 'absolute';
+    svgTextY.style.top = 0;
+    svgTextY.style.left = 0;
 
-Telecharm.prototype.rerenderYAxis = function(scY) {
+    svgTextY.setAttribute('viewBox', [0, 0, this.containerSvg.offsetWidth / 20, this.containerSvg.offsetHeight].join(" "));
+
     let { maxY, currMaxY: currVBHeight } = this.getMaxs(),
         Y = 0,
         dY = 2 * currVBHeight / 11,
         gL = this.axis.gYLines = document.createElementNS(this.svgns, "g"),
         gT = this.axis.gYText = document.createElementNS(this.svgns, "g"),
-        scaleY = scY ? scY : maxY/currVBHeight;
+        scaleY = scY ? scY : maxY/currVBHeight,
+        textScale = this.containerSvg.offsetHeight / currVBHeight;
 
     this.axis.scaleY = scaleY;
 
@@ -685,7 +1133,7 @@ Telecharm.prototype.rerenderYAxis = function(scY) {
 
         text.setAttribute("class", "axis");
         text.setAttribute("x", 0);
-        text.setAttribute("y", (currVBHeight - Y - 5) * scaleY);
+        text.setAttribute("y", ((currVBHeight - Y) * textScale - 5) / scaleY);
         text.setAttribute("fill", "#777777");
         text.setAttribute("vector-effect", "non-scaling-stroke");
 
@@ -696,191 +1144,36 @@ Telecharm.prototype.rerenderYAxis = function(scY) {
         Y += dY;
     }
 
-    this.axis.svg.appendChild(this.axis.gYLines);
-    this.axis.svg.appendChild(this.axis.gYText);
-};
-
-Telecharm.prototype.fadeOutYAxis = function(opts) {
-    let { maxY, currMaxY: currVBHeight } = this.getMaxs(),
-        Y = 0,
-        dY = 2 * currVBHeight / 11,
-        gTOld = opts.gTOld,
-        gLOld = opts.gLOld,
-        lenOld = gTOld.children.length,
-        gT = this.axis.gYText,
-        gL = this.axis.gYLines,
-        len = gT.children.length,
-        progress = opts.progress,
-        targetScale = opts.prevMaxY / currVBHeight ,
-        scaleY = 1 + (targetScale - 1) * progress,
-        scaleY2 = scaleY / targetScale;
-
-    gLOld.setAttribute("transform", "translate(0 " + maxY * (1 - scaleY) + ") scale(1 " + scaleY + ")");
-    gLOld.style.opacity = 1 - progress;
-
-    for (let i = 0; i < len; i++) {
-        let c = gTOld.children[i];
-        c.setAttribute("y", c.y.animVal[0].value * scaleY / opts.prevScale);
-    }
-
-    gTOld.setAttribute("transform", "translate(0 " + maxY * (1 - scaleY) + ")");
-    gTOld.style.opacity = 1 - progress;
-
-    gL.setAttribute("transform", "translate(0 " + maxY * (1 - scaleY2) + ") scale(1 " + scaleY2 + ")");
-    gL.style.opacity = progress;
-
-    for (let i = 0; i < len; i++) {
-        let c = gT.children[i];
-        c.setAttribute("y", c.y.animVal[0].value * scaleY2 / opts.prevScale2);
-    }
-
-    gT.setAttribute("transform", "translate(0 " + maxY * (1 - scaleY2) + ")");
-    gT.style.opacity = progress;
-
-    opts.prevScale = scaleY;
-    opts.prevScale2 = scaleY2;
-
-    return opts;
-};
-
-Telecharm.prototype.smoothlyUpdateChart = function(opts) {
-    let {
-            progress,
-            maxs,
-            prevScaleX,
-            prevScaleY,
-            prevTranslateX,
-            prevTranslateY
-        } = opts,
-        pv = this.preview,
-        targetScaleX = 1 / (pv.carrier.end - pv.carrier.begin),
-        targetScaleY = (maxs.maxY / maxs.currMaxY),
-        vbWidth = this.mainChart.viewBox.width,
-        targetTranslateX = -1 * vbWidth * pv.carrier.begin,
-        targetTranslateY = maxs.currMaxY - maxs.maxY,
-        currentScaleX = prevScaleX + (targetScaleX - prevScaleX) * progress,
-        currentScaleY = prevScaleY + (targetScaleY - prevScaleY) * progress,
-        currentTranslateX = prevTranslateX + (targetTranslateX - prevTranslateX) * progress,
-        currentTranslateY = (prevTranslateY + (targetTranslateY - prevTranslateY) * progress) * ( targetScaleY > prevScaleY ? targetScaleY : prevScaleY) / currentScaleY;
-
-    this.mainChart.chartsG.setAttribute("transform", " scale(" + currentScaleX + " " + currentScaleY +") translate(" + currentTranslateX + " " + currentTranslateY  + ")");
-};
-
-Telecharm.prototype.smoothlyUpdatePreview = function(opts) {
-    let {
-            progress,
-            maxs,
-            prevScaleX,
-            prevScaleY,
-            prevTranslateX,
-            prevTranslateY
-        } = opts,
-        previewChanged = false,
-        pv = this.preview,
-        targetScaleX = 1 / (pv.carrier.end - pv.carrier.begin),
-        targetScaleY = (maxs.maxY / maxs.currMaxY),
-        vbWidth = this.mainChart.viewBox.width,
-        targetTranslateX = -1 * vbWidth * pv.carrier.begin,
-        targetTranslateY = maxs.currMaxY - maxs.maxY,
-        currentScaleX = prevScaleX + (targetScaleX - prevScaleX) * progress,
-        currentScaleY = prevScaleY + (targetScaleY - prevScaleY) * progress,
-        currentTranslateX = prevTranslateX + (targetTranslateX - prevTranslateX) * progress,
-        currentTranslateY = (prevTranslateY + (targetTranslateY - prevTranslateY) * progress) * ( targetScaleY > prevScaleY ? targetScaleY : prevScaleY) / currentScaleY;
-
-    this.dots.dislayedCharts.forEach(name => {
-        if (this.mainChart.chartG[name].style.opacity < 1) {
-            this.mainChart.chartG[name].style.opacity = progress;
-            this.preview.chartG[name].style.opacity = progress;
-            this.preview.chartBackG[name].style.opacity = progress;
-            previewChanged = true;
-        }
-    });
-
-    this.dots.hiddenCharts.forEach(name => {
-        if (this.mainChart.chartG[name].style.opacity > 0) {
-            this.mainChart.chartG[name].style.opacity = 1 - progress;
-            this.preview.chartG[name].style.opacity = 1 - progress;
-            this.preview.chartBackG[name].style.opacity = 1 - progress;
-            previewChanged = true;
-        }
-    });
-
-    if (previewChanged) {
-        this.preview.chartsG.setAttribute("transform", " scale(1 " + currentScaleY +") translate(0 " + currentTranslateY  + ")");
-        this.preview.chartsBackG.setAttribute("transform", " scale(1 " + currentScaleY +") translate(0 " + currentTranslateY  + ")");
-    }
-};
-
-Telecharm.prototype.animateYAxis = function(opts) {
-    var maxs = this.getMaxs(),
-        gL = this.axis.gYLines,
-        gT = this.axis.gYText,
-        Y = 0,
-        dY = 2 * maxs.currMaxY / 11,
-        len = gT.children.length,
-        {
-            prevMaxY,
-            prevScaleX,
-            prevScaleY,
-            prevTranslateX,
-            prevTranslateY
-        } = opts;
-
-    this.axis.gYLines = gL.cloneNode(true);
-    this.axis.gYText = gT.cloneNode(true);
-
-    for (let i = 0; i < len ; i++) {
-        this.axis.gYText.children[i].innerHTML = Math.round(Y);
-
-        Y += dY;
-    }
+    svgTextY.appendChild(gT);
+    this.containerSvg.appendChild(svgTextY);
 
     this.axis.svg.appendChild(this.axis.gYLines);
-    this.axis.svg.appendChild(this.axis.gYText);
 
-
-    var animF = function(opts) {
-        requestAnimationFrame(function(timestamp) {
-            let progress = (timestamp - opts.start) / opts.duration;
-
-            opts.progress = progress > 1 ? 1 : progress;
-            opts = this.fadeOutYAxis(opts);
-            this.smoothlyUpdateChart(opts);
-            this.smoothlyUpdatePreview(opts);
-
-            if (progress < 1) {
-                animF(opts);
-            } else {
-                opts.gLOld.remove();
-                opts.gTOld.remove();
-            }
-        }.bind(this))
-    }.bind(this);
-
-    animF({
-        start: performance.now(),
-        duration: 300,
-        startScale: 1,
-        prevScale: 1,
-        prevScale2: 1,
-        targetScale: this.mainChart.viewBox.height/prevMaxY,
-        gLOld: gL,
-        gTOld: gT,
-        prevMaxY: prevMaxY,
-        maxs: maxs,
-        prevScaleX,
-        prevScaleY,
-        prevTranslateX,
-        prevTranslateY
-    });
 };
 
-Telecharm.prototype.rerenderXAxis = function() {
-    var { viewXs } = this.getXs(),
-        len = viewXs.length,
+Telecharm.prototype.drawXAxis = function() {
+    let svgTextX = this.axis.svgTextX = document.createElementNS(this.svgns, "svg");
+
+    svgTextX.style.width = this.mainChart.element.width;
+    svgTextX.style.height = '5%';
+    svgTextX.style.position = 'absolute';
+    svgTextX.style.bottom = '10%';
+    svgTextX.style.left = 0;
+
+    svgTextX.setAttribute('viewBox', [0, 0, this.containerSvg.offsetWidth, this.containerSvg.offsetHeight / 20].join(" "));
+
+    let Xs = this.dots.Xs,
+        lenXs = Xs.length,
+        dotsStart = Math.floor(lenXs * this.preview.carrier.beginToRender),
+        dotsEnd = Math.round(lenXs * this.preview.carrier.endToRender),
+        len = dotsEnd - dotsStart,
+        scaleX = this.currentState.scaleX,
+        translateX = this.currentState.translateX,
         segDotsLen, X = 0, dX, segments, startDotX,
-        vbWidth = this.mainChart.viewBox.width,
-        gX = this.axis.gX;
+        vbWidth = this.containerSvg.offsetWidth,
+        gX = this.axis.gX = document.createElementNS(this.svgns, "g");
+
+    // gX.setAttribute("transform", "translate(" + translateX + " 0)");
 
     if (len < 15) {
         segments = this.xAxisRule[len];
@@ -896,23 +1189,46 @@ Telecharm.prototype.rerenderXAxis = function() {
 
     dX = segDotsLen * vbWidth / len;
     startDotX = Math.floor((len - segDotsLen * (segments - 1)) / 2);
-    X = startDotX * vbWidth / len;
+    X = startDotX * vbWidth / len - dX;
 
-    for (let i = startDotX; i < len; i += segDotsLen) {
-        let text = document.createElementNS(this.svgns, "text");
-        let date = viewXs[i];
+    gX.setAttribute("data-dx", dX);
+    gX.setAttribute("data-seglen", segDotsLen);
+    gX.setAttribute("data-trx", 0);
 
-        text.setAttribute("class", "axis");
-        text.setAttribute("x", X);
-        text.setAttribute("y", this.mainChart.viewBox.height - 10);
-        text.setAttribute("fill", "#777777");
+    for (let i = dotsStart + startDotX - segDotsLen; i >= lenXs || i < dotsEnd + segDotsLen; i += segDotsLen) {
+        if (i < 0) {
+            continue;
+        }
 
-        text.innerHTML = date.getDate() + " " + this.months[date.getMonth()];
+        let text = this.createXAxisText(Xs[i], X);
+        text.setAttribute("data-x", X);
+        text.setAttribute("data-idx", i);
 
         gX.appendChild(text);
-
         X += dX;
     }
+
+    svgTextX.appendChild(this.axis.gX);
+    this.containerSvg.appendChild(svgTextX);
+};
+
+Telecharm.prototype.createXAxisText = function(value, coordX) {
+    let text = document.createElementNS(this.svgns, "text");
+    let date = value;
+
+    text.setAttribute("class", "axis");
+    text.setAttribute("x", coordX);
+    text.setAttribute("y", this.containerSvg.offsetHeight * 0.05);
+    text.setAttribute("fill", "#777777");
+    text.setAttribute("vector-effect", "non-scaling-stroke");
+
+    text.innerHTML = this.getDateText(date);
+
+    return text;
+};
+
+Telecharm.prototype.getDateText = function(date) {
+    return date.getDate() + " " + this.months[date.getMonth()]
 };
 
 Telecharm.prototype.drawAxis = function() {
@@ -943,12 +1259,8 @@ Telecharm.prototype.drawAxis = function() {
 
     svg.appendChild(style);
 
-    this.axis.gX = document.createElementNS(this.svgns, "g");
-
-    this.rerenderYAxis();
-    this.rerenderXAxis();
-
-    svg.appendChild(this.axis.gX);
+    this.drawYAxis();
+    this.drawXAxis();
 
     this.containerSvg.appendChild(svg);
 };
@@ -1026,41 +1338,29 @@ Telecharm.prototype.bindButtonHandler = function(btn, name) {
     return function(e) {
         e.stopPropagation();
         e.preventDefault();
+
+        if (this.dots.displayedCharts.size == 1 && btn.classList.contains("selected")) {
+            return;
+        }
+
         btn.classList.toggle("selected");
 
-        var { maxY, currMaxY } = this.getMaxs(),
-            gT = this.axis.gYText,
-            gL = this.axis.gYLines,
-            scaleY = this.axis.scaleY,
-            pv = this.preview,
-            prevScaleX = 1 / (pv.carrier.end - pv.carrier.begin),
-            prevScaleY = maxY / currMaxY,
-            vbWidth = this.mainChart.viewBox.width,
-            prevTranslateX = -1 * vbWidth * pv.carrier.begin,
-            prevTranslateY = currMaxY - maxY;
+        this.currentStateSnapshot(this.lastState);
 
-        if (this.dots.dislayedCharts.has(name)) {
-            this.dots.dislayedCharts.delete(name);
+        if (this.dots.displayedCharts.has(name)) {
+            this.dots.displayedCharts.delete(name);
             this.dots.hiddenCharts.add(name);
         } else {
-            this.dots.dislayedCharts.add(name);
+            this.dots.displayedCharts.add(name);
             this.dots.hiddenCharts.delete(name);
         }
 
-        this.animateYAxis({
-            prevMaxY: currMaxY,
-            prevScaleX,
-            prevScaleY,
-            prevTranslateX,
-            prevTranslateY
-        });
+        this.requestViewUpdate();
     }.bind(this);
 };
 
 document.addEventListener("DOMContentLoaded", () => {
     charm = new Telecharm({
-        width: 1000,
-        height: 500,
         data: data[0],
         container: "chart"
     });
