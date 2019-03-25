@@ -991,6 +991,34 @@ Telecharm.prototype.bindHandler = function() {
     }.bind(this)
 };
 
+Telecharm.prototype.bindTouchHandler = function() {
+    return function(e) {
+        this.dragProcessing = true;
+        this.currentStateSnapshot(this.lastState);
+
+        this.lastMousePosX = e.pageX;
+
+        let pos = e.offsetX * this.preview.viewBox.width / this.containerSvg.offsetWidth,
+            rect = this.preview.rects.carrierMaskRect;
+
+        if (pos <= rect.x.animVal.value) {
+            document.onmousemove = this.leftHandlerDrag.bind(this);
+        } else if (pos >= rect.x.animVal.value + rect.width.animVal.value) {
+            document.onmousemove = this.rightHandlerDrag.bind(this);
+        } else {
+            document.onmousemove = this.mouseMoveHandler.bind(this);
+        }
+
+        document.ontouchend = function() {
+            this.dragProcessing = false;
+            this.dragLeft = false;
+            this.dragRight = false;
+            document.ontouchmove = null;
+            document.ontouchstart = null;
+        }.bind(this);
+    }.bind(this)
+};
+
 Telecharm.prototype.currentStateSnapshot = function(state) {
     var { maxY, currMaxY } = this.getMaxs(),
         pv = this.preview,
@@ -1091,6 +1119,7 @@ Telecharm.prototype.drawPreviewSlider = function() {
     };
 
     handlerRect.onmousedown = this.bindHandler();
+    handlerRect.ontouchstart = this.bindTouchHandler();
 };
 
 Telecharm.prototype.drawYAxis = function(scY) {
